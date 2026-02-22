@@ -1,0 +1,20 @@
+services:
+  web-nginx:
+    networks:
+      edge_net:
+        ipv6_address: ${WEB_IPV6_ADDRESS}
+
+  web-apache:
+    networks:
+      edge_net:
+        ipv6_address: ${WEB_IPV6_ADDRESS}
+
+  web-openlitespeed:
+    networks:
+      edge_net:
+        ipv6_address: ${WEB_IPV6_ADDRESS}
+
+  phpmyadmin:
+    networks:
+      edge_net:
+        ipv6_address: ${PHPMYADMIN_IPV6_ADDRESS}

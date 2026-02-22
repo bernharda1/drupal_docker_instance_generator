@@ -1,0 +1,36 @@
+vcl 4.1;
+
+backend default {
+    .host = "__VARNISH_BACKEND_HOST__";
+    .port = "__VARNISH_BACKEND_PORT__";
+}
+
+sub vcl_recv {
+    if (req.method != "GET" && req.method != "HEAD") {
+        return (pass);
+    }
+
+    if (req.url ~ "^/(admin|user|cart|checkout|core/install.php)") {
+        return (pass);
+    }
+
+    return (hash);
+}
+
+sub vcl_backend_response {
+    if (beresp.ttl <= 0s || beresp.http.Set-Cookie) {
+        set beresp.uncacheable = true;
+        set beresp.ttl = 120s;
+        return (deliver);
+    }
+
+    set beresp.ttl = 5m;
+}
+
+sub vcl_deliver {
+    if (obj.hits > 0) {
+        set resp.http.X-Cache = "HIT";
+    } else {
+        set resp.http.X-Cache = "MISS";
+    }
+}

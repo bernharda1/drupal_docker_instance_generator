@@ -1,0 +1,55 @@
+{
+  "name": "infrasightsolutions/drupal",
+  "description": "Drupal 11.3 (Composer-managed) for Infrasight Solutions.",
+  "type": "project",
+  "license": "proprietary",
+  "repositories": [
+    {
+      "type": "composer",
+      "url": "https://packages.drupal.org/8"
+    }
+  ],
+  "require": {
+    "php": "^8.4",
+    "composer/installers": "^2.3",
+    "drupal/canvas": "^1",
+    "drupal/commerce": "^3.2",
+    "drupal/core-composer-scaffold": "^11.3",
+    "drupal/core-project-message": "^11.3",
+    "drupal/core-recommended": "^11.3",
+    "drupal/inline_entity_form": "^3.0@RC",
+    "drupal/webform": "^6.3@beta",
+    "drush/drush": "^13.0"
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true,
+  "config": {
+    "sort-packages": true,
+    "allow-plugins": {
+      "composer/installers": true,
+      "drupal/core-composer-scaffold": true,
+      "drupal/core-project-message": true
+    }
+  },
+  "extra": {
+    "drupal-scaffold": {
+      "locations": {
+        "web-root": "web/"
+      }
+    },
+    "installer-paths": {
+      "web/core": ["type:drupal-core"],
+      "web/libraries/{$name}": ["type:drupal-library"],
+      "web/modules/contrib/{$name}": ["type:drupal-module"],
+      "web/profiles/contrib/{$name}": ["type:drupal-profile"],
+      "web/themes/contrib/{$name}": ["type:drupal-theme"],
+      "drush/Commands/contrib/{$name}": ["type:drupal-drush"],
+      "web/modules/custom/{$name}": ["type:drupal-custom-module"],
+      "web/themes/custom/{$name}": ["type:drupal-custom-theme"],
+      "web/profiles/custom/{$name}": ["type:drupal-custom-profile"]
+    }
+  },
+  "require-dev": {
+    "friendsoftwig/twigcs": "^6"
+  }
+}

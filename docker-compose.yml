@@ -1,0 +1,443 @@
+services:
+  drupal-fpm:
+    image: ${DRUPAL_IMAGE_NAME:-infrasight/drupal11-fpm}:${DRUPAL_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: docker/drupal-fpm/Dockerfile
+      args:
+        DRUPAL_BASE_IMAGE: ${DRUPAL_BASE_IMAGE:-php:8.4.18-fpm-bookworm}
+    container_name: infrasight_drupal_fpm
+    hostname: ${FPM_HOSTNAME:-drupal-fpm}
+    restart: unless-stopped
+    working_dir: /var/www/html
+    environment:
+      TZ: ${TZ:-Europe/Vienna}
+      UPDATE_POLICY: ${FPM_UPDATE_POLICY:-check}
+      UPDATE_TARGET: ${FPM_UPDATE_TARGET:-system}
+      DRUPAL_TRUSTED_HOST_PATTERNS: ${DRUPAL_TRUSTED_HOST_PATTERNS:-^localhost$,^127\\.0\\.0\\.1$,^${PUBLIC_DOMAIN}$}
+      DRUPAL_DB_DRIVER: ${DRUPAL_DB_DRIVER:-mysql}
+      DRUPAL_DB_HOST: ${DRUPAL_DB_HOST:-db-mysql}
+      DRUPAL_DB_PORT: ${DRUPAL_DB_PORT:-3306}
+      DRUPAL_DB_NAME: ${DRUPAL_DB_NAME:-drupal}
+      DRUPAL_DB_USER: ${DRUPAL_DB_USER:-drupal}
+      DRUPAL_DB_PASSWORD: ${DRUPAL_DB_PASSWORD:-drupal}
+      DRUPAL_REDIS_HOST: ${DRUPAL_REDIS_HOST:-redis}
+      DRUPAL_MAIL_HOST: ${DRUPAL_MAIL_HOST:-mailpit}
+      DRUPAL_MAIL_PORT: ${DRUPAL_MAIL_PORT:-1025}
+      WRITABLE_UID: ${DRUPAL_WRITABLE_UID:-33}
+      WRITABLE_GID: ${DRUPAL_WRITABLE_GID:-33}
+      WRITABLE_DIR_MODE: ${DRUPAL_WRITABLE_DIR_MODE:-2775}
+      WRITABLE_FILE_MODE: ${DRUPAL_WRITABLE_FILE_MODE:-0664}
+    volumes:
+      - ./drupal:/var/www/html
+      - drupal_public_files:/var/www/html/web/sites/default/files
+      - drupal_private_files:/var/www/html/web/sites/default/private
+      - drupal_tmp:/tmp/drupal
+      - ./config/php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
+    networks:
+      - app_net
+    mem_limit: ${FPM_MEM_LIMIT:-1024m}
+    cpus: ${FPM_CPUS:-1.00}
+    dns:
+      - 46.38.252.230
+      - 46.38.225.230
+      - 1.1.1.1
+
+  web-nginx:
+    image: nginx:1.27-alpine
+    container_name: infrasight_web_nginx
+    hostname: ${WEB_HOSTNAME:-web-nginx}
+    restart: unless-stopped
+    profiles: ["web-nginx"]
+    depends_on:
+      - drupal-fpm
+    volumes:
+      - ./drupal:/var/www/html:ro
+      - drupal_public_files:/var/www/html/web/sites/default/files:ro
+      - ./config/nginx/web-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      app_net: {}
+      edge_net: {}
+      proxy: {}
+    expose:
+      - "8080"
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-true}"
+      - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
+      - "traefik.http.routers.infrasight-nginx-http.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-nginx-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.infrasight-nginx-http.middlewares=infrasight-nginx-https-redirect"
+      - "traefik.http.middlewares.infrasight-nginx-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.infrasight-nginx-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.infrasight-nginx-https.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-nginx-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.infrasight-nginx-https.tls=true"
+      - "traefik.http.routers.infrasight-nginx-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.infrasight-nginx-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
+      - "traefik.http.routers.infrasight-nginx-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
+      - "traefik.http.services.infrasight-nginx.loadbalancer.server.port=8080"
+    mem_limit: ${WEB_NGINX_MEM_LIMIT:-384m}
+    cpus: ${WEB_NGINX_CPUS:-0.50}
+
+  web-apache:
+    image: httpd:2.4
+    container_name: infrasight_web_apache
+    hostname: ${WEB_HOSTNAME:-web-apache}
+    restart: unless-stopped
+    profiles: ["web-apache"]
+    depends_on:
+      - drupal-fpm
+    volumes:
+      - ./drupal:/var/www/html:ro
+      - drupal_public_files:/var/www/html/web/sites/default/files:ro
+      - ./config/apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+    networks:
+      app_net: {}
+      edge_net: {}
+      proxy: {}
+    expose:
+      - "8080"
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-true}"
+      - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
+      - "traefik.http.routers.infrasight-apache-http.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-apache-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.infrasight-apache-http.middlewares=infrasight-apache-https-redirect"
+      - "traefik.http.middlewares.infrasight-apache-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.infrasight-apache-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.infrasight-apache-https.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-apache-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.infrasight-apache-https.tls=true"
+      - "traefik.http.routers.infrasight-apache-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.infrasight-apache-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
+      - "traefik.http.routers.infrasight-apache-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
+      - "traefik.http.services.infrasight-apache.loadbalancer.server.port=8080"
+    mem_limit: ${WEB_APACHE_MEM_LIMIT:-384m}
+    cpus: ${WEB_APACHE_CPUS:-0.50}
+
+  web-openlitespeed:
+    image: litespeedtech/openlitespeed:1.8.2-lsphp84
+    container_name: infrasight_web_openlitespeed
+    hostname: ${WEB_HOSTNAME:-web-openlitespeed}
+    restart: unless-stopped
+    profiles: ["web-ols"]
+    depends_on:
+      - drupal-fpm
+    environment:
+      TZ: ${TZ:-Europe/Vienna}
+    volumes:
+      - ./drupal:/var/www/html:ro
+      - drupal_public_files:/var/www/html/web/sites/default/files:ro
+      - ./config/openlitespeed/httpd_config.conf:/usr/local/lsws/conf/httpd_config.conf:ro
+      - ./config/openlitespeed/vhconf.conf:/usr/local/lsws/conf/vhosts/Example/vhconf.conf:ro
+    networks:
+      app_net: {}
+      edge_net: {}
+      proxy: {}
+    expose:
+      - "8080"
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-true}"
+      - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
+      - "traefik.http.routers.infrasight-ols-http.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-ols-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.infrasight-ols-http.middlewares=infrasight-ols-https-redirect"
+      - "traefik.http.middlewares.infrasight-ols-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.infrasight-ols-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.infrasight-ols-https.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-ols-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.infrasight-ols-https.tls=true"
+      - "traefik.http.routers.infrasight-ols-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.infrasight-ols-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
+      - "traefik.http.routers.infrasight-ols-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
+      - "traefik.http.services.infrasight-ols.loadbalancer.server.port=8080"
+    mem_limit: ${WEB_OLS_MEM_LIMIT:-512m}
+    cpus: ${WEB_OLS_CPUS:-0.75}
+
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    container_name: infrasight_reverse_proxy
+    hostname: ${REVERSE_PROXY_HOSTNAME:-reverse-proxy}
+    restart: unless-stopped
+    profiles: ["reverse-proxy"]
+    environment:
+      UPSTREAM_HOST: ${UPSTREAM_HOST:-web-nginx}
+      UPSTREAM_PORT: ${UPSTREAM_PORT:-8080}
+      UPDATE_POLICY: ${RP_UPDATE_POLICY:-off}
+      UPDATE_TARGET: ${RP_UPDATE_TARGET:-system}
+    command: >
+      /bin/sh -c '
+      cp /etc/nginx/templates/reverse-proxy.conf.template /etc/nginx/conf.d/default.conf;
+      sed -i "s|__UPSTREAM_HOST__|$$UPSTREAM_HOST|g; s|__UPSTREAM_PORT__|$$UPSTREAM_PORT|g" /etc/nginx/conf.d/default.conf;
+      nginx -t;
+      nginx -g "daemon off;"'
+    volumes:
+      - ./config/reverse-proxy/reverse-proxy.conf.template:/etc/nginx/templates/reverse-proxy.conf.template:ro
+    networks:
+      - app_net
+      - edge_net
+    ports:
+      - "${PUBLIC_BIND_ADDRESS}:${REVERSE_PROXY_HOST_PORT}:80"
+    mem_limit: ${REVERSE_PROXY_MEM_LIMIT:-256m}
+    cpus: ${REVERSE_PROXY_CPUS:-0.30}
+
+  db-mysql:
+    image: mysql:8.4
+    container_name: infrasight_db_mysql
+    hostname: ${MYSQL_HOSTNAME:-db-mysql}
+    restart: unless-stopped
+    profiles: ["db-mysql"]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-drupal}
+      MYSQL_USER: ${MYSQL_USER:-drupal}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-drupal}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - app_net
+    mem_limit: ${MYSQL_MEM_LIMIT:-1024m}
+    cpus: ${MYSQL_CPUS:-1.00}
+
+  db-mariadb:
+    image: mariadb:11
+    container_name: infrasight_db_mariadb
+    hostname: ${MARIADB_HOSTNAME:-db-mariadb}
+    restart: unless-stopped
+    profiles: ["db-mariadb"]
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-drupal}
+      MARIADB_USER: ${MARIADB_USER:-drupal}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-drupal}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - app_net
+    mem_limit: ${MARIADB_MEM_LIMIT:-1024m}
+    cpus: ${MARIADB_CPUS:-1.00}
+
+  db-postgres:
+    image: postgres:17-alpine
+    container_name: infrasight_db_postgres
+    hostname: ${POSTGRES_HOSTNAME:-db-postgres}
+    restart: unless-stopped
+    profiles: ["db-postgres"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-drupal}
+      POSTGRES_USER: ${POSTGRES_USER:-drupal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-drupal}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_net
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1024m}
+    cpus: ${POSTGRES_CPUS:-1.00}
+
+  redis:
+    image: redis:7-alpine
+    container_name: infrasight_cache_redis
+    hostname: ${REDIS_HOSTNAME:-redis}
+    restart: unless-stopped
+    profiles: ["cache-redis"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_net
+    mem_limit: ${REDIS_MEM_LIMIT:-256m}
+    cpus: ${REDIS_CPUS:-0.30}
+
+  varnish:
+    image: varnish:7.5
+    container_name: infrasight_cache_varnish
+    hostname: ${VARNISH_HOSTNAME:-varnish}
+    restart: unless-stopped
+    profiles: ["cache-varnish"]
+    environment:
+      VARNISH_BACKEND_HOST: ${VARNISH_BACKEND_HOST:-web-nginx}
+      VARNISH_BACKEND_PORT: ${VARNISH_BACKEND_PORT:-8080}
+    command: >
+      /bin/sh -c '
+      cp /etc/varnish/default.vcl.template /etc/varnish/default.vcl;
+      sed -i "s|__VARNISH_BACKEND_HOST__|$$VARNISH_BACKEND_HOST|g; s|__VARNISH_BACKEND_PORT__|$$VARNISH_BACKEND_PORT|g" /etc/varnish/default.vcl;
+      varnishd -F -f /etc/varnish/default.vcl -a :6081 -s malloc,256m'
+    volumes:
+      - ./config/varnish/default.vcl.template:/etc/varnish/default.vcl.template:ro
+    depends_on:
+      - drupal-fpm
+    networks:
+      - app_net
+      - edge_net
+    ports:
+      - "${PUBLIC_BIND_ADDRESS}:${VARNISH_HOST_PORT}:6081"
+    mem_limit: ${VARNISH_MEM_LIMIT:-384m}
+    cpus: ${VARNISH_CPUS:-0.40}
+
+  phpmyadmin:
+    image: phpmyadmin:5-apache
+    container_name: infrasight_phpmyadmin
+    hostname: ${PHPMYADMIN_HOSTNAME:-phpmyadmin}
+    restart: unless-stopped
+    profiles: ["phpmyadmin"]
+    environment:
+      PMA_HOST: ${PMA_HOST:-db-mysql}
+      PMA_PORT: ${PMA_PORT:-3306}
+      PMA_USER: ${PMA_USER:-root}
+      PMA_PASSWORD: ${PMA_PASSWORD:-root}
+      UPLOAD_LIMIT: ${PMA_UPLOAD_LIMIT:-256M}
+    networks:
+      - app_net
+      - edge_net
+      - proxy
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-true}"
+      - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
+      - "traefik.http.routers.infrasight-phpmyadmin-http.rule=Host(`${PHPMYADMIN_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-phpmyadmin-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.infrasight-phpmyadmin-http.middlewares=infrasight-phpmyadmin-https-redirect"
+      - "traefik.http.middlewares.infrasight-phpmyadmin-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.infrasight-phpmyadmin-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.infrasight-phpmyadmin-https.rule=Host(`${PHPMYADMIN_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-phpmyadmin-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.infrasight-phpmyadmin-https.tls=true"
+      - "traefik.http.routers.infrasight-phpmyadmin-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.infrasight-phpmyadmin-https.middlewares=${TRAEFIK_UI_SECURITY_MIDDLEWARES:-${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}}"
+      - "traefik.http.services.infrasight-phpmyadmin.loadbalancer.server.port=80"
+    ports:
+      - "${PUBLIC_BIND_ADDRESS}:${PHPMYADMIN_HOST_PORT}:80"
+      - "${PUBLIC_BIND_ADDRESS_V4}:${PHPMYADMIN_HOST_PORT}:80"
+    mem_limit: ${PHPMYADMIN_MEM_LIMIT:-256m}
+    cpus: ${PHPMYADMIN_CPUS:-0.30}
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: infrasight_mailpit
+    hostname: ${MAILPIT_HOSTNAME:-mailpit}
+    restart: unless-stopped
+    profiles: ["mailpit"]
+    environment:
+      MP_SMTP_BIND_ADDR: 0.0.0.0:1025
+      MP_UI_BIND_ADDR: 0.0.0.0:8025
+      MP_MAX_MESSAGES: ${MAILPIT_MAX_MESSAGES:-5000}
+    networks:
+      - app_net
+      - edge_net
+      - proxy
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE:-true}"
+      - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
+      - "traefik.http.routers.infrasight-mailpit-http.rule=Host(`${MAILPIT_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-mailpit-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.infrasight-mailpit-http.middlewares=infrasight-mailpit-https-redirect"
+      - "traefik.http.middlewares.infrasight-mailpit-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.infrasight-mailpit-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.infrasight-mailpit-https.rule=Host(`${MAILPIT_DOMAIN}`)"
+      - "traefik.http.routers.infrasight-mailpit-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.infrasight-mailpit-https.tls=true"
+      - "traefik.http.routers.infrasight-mailpit-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.infrasight-mailpit-https.middlewares=${TRAEFIK_UI_SECURITY_MIDDLEWARES:-${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}}"
+      - "traefik.http.services.infrasight-mailpit.loadbalancer.server.port=8025"
+    ports:
+      - "${PUBLIC_BIND_ADDRESS}:${MAILPIT_SMTP_HOST_PORT}:1025"
+      - "${PUBLIC_BIND_ADDRESS_V4}:${MAILPIT_SMTP_HOST_PORT}:1025"
+      - "${PUBLIC_BIND_ADDRESS}:${MAILPIT_UI_HOST_PORT}:8025"
+      - "${PUBLIC_BIND_ADDRESS_V4}:${MAILPIT_UI_HOST_PORT}:8025"
+    mem_limit: ${MAILPIT_MEM_LIMIT:-256m}
+    cpus: ${MAILPIT_CPUS:-0.30}
+
+  composer:
+    image: ${DRUPAL_IMAGE_NAME:-infrasight/drupal11-fpm}:${DRUPAL_IMAGE_TAG:-local}
+    container_name: infrasight_composer
+    hostname: ${COMPOSER_HOSTNAME:-composer}
+    profiles: ["tools"]
+    working_dir: /var/www/html
+    user: "${UID:-1000}:${GID:-1000}"
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    command: ["tail", "-f", "/dev/null"]
+    dns:
+      - 46.38.252.230
+      - 46.38.225.230
+      - 1.1.1.1
+    environment:
+      COMPOSER_CACHE_DIR: /tmp/composer-cache
+      UPDATE_POLICY: ${COMPOSER_UPDATE_POLICY:-off}
+      UPDATE_TARGET: ${COMPOSER_UPDATE_TARGET:-system}
+    volumes:
+      - ./drupal:/var/www/html
+      - ./.cache/composer:/tmp/composer-cache
+      - ./config/php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
+    networks:
+      - app_net
+    mem_limit: ${COMPOSER_MEM_LIMIT:-768m}
+    cpus: ${COMPOSER_CPUS:-0.80}
+
+  drush:
+    image: ${DRUPAL_IMAGE_NAME:-infrasight/drupal11-fpm}:${DRUPAL_IMAGE_TAG:-local}
+    container_name: infrasight_drush
+    hostname: ${DRUSH_HOSTNAME:-drush}
+    profiles: ["tools"]
+    working_dir: /var/www/html
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["tail","-f","/dev/null"]
+    dns:
+      - 46.38.252.230
+      - 46.38.225.230
+      - 1.1.1.1
+    environment:
+      UPDATE_POLICY: ${DRUSH_UPDATE_POLICY:-off}
+      UPDATE_TARGET: ${DRUSH_UPDATE_TARGET:-system}
+    volumes:
+      - ./drupal:/var/www/html
+      - ./config/php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
+    networks:
+      - app_net
+    mem_limit: ${DRUSH_MEM_LIMIT:-512m}
+    cpus: ${DRUSH_CPUS:-0.50}
+
+  node:
+    image: node:22-alpine
+    container_name: infrasight_node
+    hostname: ${NODE_HOSTNAME:-node}
+    profiles: ["tools"]
+    working_dir: /workspace
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["tail","-f","/dev/null"]
+    environment:
+      UPDATE_POLICY: ${NODE_UPDATE_POLICY:-off}
+      UPDATE_TARGET: ${NODE_UPDATE_TARGET:-system}
+    volumes:
+      - ./drupal/web:/workspace
+    networks:
+      - app_net
+    mem_limit: ${NODE_MEM_LIMIT:-768m}
+    cpus: ${NODE_CPUS:-0.80}
+
+networks:
+  app_net:
+    driver: bridge
+    internal: ${APP_NET_INTERNAL:-false}
+  edge_net:
+    external: true
+    name: ${EDGE_NETWORK_NAME:-dev_net}
+  proxy:
+    external: true
+    name: ${TRAEFIK_DOCKER_NETWORK:-proxy}
+
+volumes:
+  mysql_data:
+  mariadb_data:
+  postgres_data:
+  redis_data:
+  drupal_public_files:
+  drupal_private_files:
+  drupal_tmp:
+

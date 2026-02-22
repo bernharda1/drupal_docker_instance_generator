@@ -1,0 +1,28 @@
+[Unit]
+Description=Traefik (Docker Compose)
+After=docker.service
+Requires=docker.service
+
+[Service]
+# Keep compose in foreground so systemd tracks the process
+Type=simple
+WorkingDirectory=/opt/traefik
+TimeoutStartSec=120
+Restart=always
+RestartSec=5s
+# Pre-checks: ensure docker is available and compose file exists
+ExecStartPre=/bin/sh -c 'command -v docker >/dev/null'
+ExecStartPre=/bin/sh -c 'docker info >/dev/null'
+ExecStartPre=/bin/sh -c '[ -f /opt/traefik/docker-compose.yml ]'
+# Start the compose stack
+# Run compose in foreground (no --detach) so systemd supervises the stack
+ExecStart=/usr/bin/docker compose up --no-build
+# Give compose a moment and show ps for diagnostics (non-fatal)
+ExecStartPost=/bin/sh -c 'sleep 3; /usr/bin/docker compose ps || true'
+ExecStartPost=/bin/sh -c '/opt/traefik/healthcheck-traefik.sh > /var/log/traefik-health.log 2>&1 &'
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose restart
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
