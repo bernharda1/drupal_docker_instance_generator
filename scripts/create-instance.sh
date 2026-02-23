@@ -285,8 +285,13 @@ fi
 
 run_cmd mkdir -p "$TARGET_DIR"
 
-run_cmd cp -a "$TEMPLATE_ROOT/." "$TARGET_DIR/"
-run_cmd rm -rf "$TARGET_DIR/.git" "$TARGET_DIR/.github"
+# Copy template into target. Prefer rsync to exclude VCS dirs; fallback to cp+rm.
+if command -v rsync >/dev/null 2>&1; then
+  run_cmd rsync -a --exclude='.git' --exclude='.github' "$TEMPLATE_ROOT/." "$TARGET_DIR/"
+else
+  run_cmd cp -a "$TEMPLATE_ROOT/." "$TARGET_DIR/"
+  run_cmd rm -rf "$TARGET_DIR/.git" "$TARGET_DIR/.github"
+fi
 
 # Use environment-specific env file as primary source of truth, since the helper scripts
 # expect .env.dev/.env.stag/.env.prod. Also keep .env in sync for convenience.
