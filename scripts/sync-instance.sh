@@ -50,6 +50,32 @@ if [ "$CONFIRM" = false ]; then
   fi
 fi
 
+# parse additional flags (after src,tgt)
+DRY_RUN=false
+S3_BUCKET=""
+BACKUP_KEEP=${BACKUP_KEEP:-7}
+shift 2 || true
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --yes) CONFIRM=true; shift ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --s3-bucket) S3_BUCKET="$2"; shift 2 ;;
+    --s3-bucket=*) S3_BUCKET="${1#*=}"; shift ;;
+    --backup-keep) BACKUP_KEEP="$2"; shift 2 ;;
+    --backup-keep=*) BACKUP_KEEP="${1#*=}"; shift ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
+
+run_cmd() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY-RUN] $*"
+    return 0
+  else
+    eval "$*"
+  fi
+}
+
 TMPDIR=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR"; }
 trap cleanup EXIT
@@ -74,7 +100,7 @@ start_services() {
   local envfile="$1"
   local project="$2"
   echo "Starting compose for $envfile (project=$project) (db + drupal)"
-  docker compose --env-file "$envfile" --project-name "$project" up -d db-mysql db-mariadb db-postgres drupal-fpm || true
+  run_cmd "docker compose --env-file '$envfile' --project-name '$project' up -d db-mysql db-mariadb db-postgres drupal-fpm || true"
 }
 
 start_services ".env.$SRC" "$SRC_PROJECT"
@@ -83,6 +109,11 @@ start_services ".env.$TGT" "$TGT_PROJECT"
 wait_container() {
   local name="$1"
   local tries=0
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY-RUN] Skipping wait for container $name"
+    return 0
+  fi
+
   until docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null | grep -q true; do
     tries=$((tries+1))
     if [ $tries -gt 30 ]; then
@@ -141,13 +172,21 @@ case "$DRIVER" in
     SRC_PASS=$(get_env_val .env.$SRC "$SRC_PASS_KEY")
     SRC_DB=$(get_env_val .env.$SRC "$SRC_DB_KEY")
     # use MYSQL_PWD to avoid exposing password in process list and avoid tablespaces
-    docker exec -i -e MYSQL_PWD="$SRC_PASS" "$SRC_DB_CONTAINER" sh -c "mysqldump -u\"$SRC_USER\" --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --skip-lock-tables \"$SRC_DB\"" > "$TMPDIR/db.sql"
+    if [ "$DRY_RUN" = true ]; then
+      echo "[DRY-RUN] Would dump DB from $SRC_DB_CONTAINER (user=$SRC_USER) to $TMPDIR/db.sql"
+    else
+      docker exec -i -e MYSQL_PWD="$SRC_PASS" "$SRC_DB_CONTAINER" sh -c "mysqldump -u\"$SRC_USER\" --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --skip-lock-tables \"$SRC_DB\"" > "$TMPDIR/db.sql"
+    fi
     ;;
   postgres)
     SRC_USER=$(get_env_val .env.$SRC "$SRC_USER_KEY")
     SRC_PASS=$(get_env_val .env.$SRC "$SRC_PASS_KEY")
     SRC_DB=$(get_env_val .env.$SRC "$SRC_DB_KEY")
-    docker exec -i -e PGPASSWORD="$SRC_PASS" "$SRC_DB_CONTAINER" sh -c "pg_dump -U \"$SRC_USER\" -d \"$SRC_DB\"" > "$TMPDIR/db.sql"
+    if [ "$DRY_RUN" = true ]; then
+      echo "[DRY-RUN] Would pg_dump DB from $SRC_DB_CONTAINER (user=$SRC_USER) to $TMPDIR/db.sql"
+    else
+      docker exec -i -e PGPASSWORD="$SRC_PASS" "$SRC_DB_CONTAINER" sh -c "pg_dump -U \"$SRC_USER\" -d \"$SRC_DB\"" > "$TMPDIR/db.sql"
+    fi
     ;;
 esac
 
@@ -163,7 +202,11 @@ case "$DRIVER" in
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
     echo "Backing up target database to $BACKUP_DIR/target-db.sql.gz"
     # use MYSQL_PWD to avoid password leakage
-    docker exec -i -e MYSQL_PWD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "mysqldump -u\"$TGT_USER\" --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --skip-lock-tables \"$TGT_DB\"" | gzip > "$BACKUP_DIR/target-db.sql.gz"
+    if [ "$DRY_RUN" = true ]; then
+      echo "[DRY-RUN] Would backup target DB to $BACKUP_DIR/target-db.sql.gz"
+    else
+      docker exec -i -e MYSQL_PWD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "mysqldump -u\"$TGT_USER\" --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --skip-lock-tables \"$TGT_DB\"" | gzip > "$BACKUP_DIR/target-db.sql.gz"
+    fi
     ;;
   postgres)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
@@ -175,9 +218,31 @@ case "$DRIVER" in
 esac
 
 echo "Backing up target files to $BACKUP_DIR/target-files.tar.gz"
-docker exec -i "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -czf - files' > "$BACKUP_DIR/target-files.tar.gz" || true
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would create target files backup at $BACKUP_DIR/target-files.tar.gz"
+else
+  docker exec -i "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -czf - files' > "$BACKUP_DIR/target-files.tar.gz" || true
+fi
 
 echo "Backups written to $BACKUP_DIR"
+
+# rotate old backups, keep $BACKUP_KEEP
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would rotate backups keeping $BACKUP_KEEP entries for $TGT"
+else
+  if [ -d "./backups/$TGT" ]; then
+    mapfile -t dirs < <(ls -1d ./backups/$TGT/* 2>/dev/null || true)
+    count=${#dirs[@]}
+    if [ $count -gt $BACKUP_KEEP ]; then
+      delete_count=$((count - BACKUP_KEEP))
+      echo "Rotating backups, removing $delete_count oldest entries"
+      for ((i=0;i<delete_count;i++)); do
+        echo "Removing ${dirs[$i]}"
+        rm -rf "${dirs[$i]}"
+      done
+    fi
+  fi
+fi
 
 # Put target into maintenance mode if possible
 echo "Enabling maintenance mode on target (if drush available)"
@@ -189,13 +254,21 @@ case "$DRIVER" in
     TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
     # import using env var for password
-    docker exec -i -e MYSQL_PWD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "mysql -u\"$TGT_USER\" \"$TGT_DB\"" < "$TMPDIR/db.sql"
+    if [ "$DRY_RUN" = true ]; then
+      echo "[DRY-RUN] Would import SQL into target DB $TGT_DB from $TMPDIR/db.sql"
+    else
+      docker exec -i -e MYSQL_PWD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "mysql -u\"$TGT_USER\" \"$TGT_DB\"" < "$TMPDIR/db.sql"
+    fi
     ;;
   postgres)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
     TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
-    docker exec -i -e PGPASSWORD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "psql -U \"$TGT_USER\" -d \"$TGT_DB\"" < "$TMPDIR/db.sql"
+    if [ "$DRY_RUN" = true ]; then
+      echo "[DRY-RUN] Would import SQL into target Postgres DB $TGT_DB from $TMPDIR/db.sql"
+    else
+      docker exec -i -e PGPASSWORD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "psql -U \"$TGT_USER\" -d \"$TGT_DB\"" < "$TMPDIR/db.sql"
+    fi
     ;;
 esac
 
@@ -205,11 +278,36 @@ TGT_FPM=infrasight_drupal_fpm
 
 echo "Streaming files from source container to target container (no host temp)..."
 # prepare target (backup existing files)
-docker exec "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && [ -d files ] && mv files files.bak || true && mkdir -p files'
-docker exec -i "$SRC_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -czf - files' | docker exec -i "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -xzf -'
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would backup existing files on target and stream files from source to target"
+else
+  docker exec "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && [ -d files ] && mv files files.bak || true && mkdir -p files'
+  docker exec -i "$SRC_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -czf - files' | docker exec -i "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -xzf -'
+fi
 
 echo "Attempting post-sync tasks on target (drush)"
-docker exec -i "$TGT_FPM" sh -c 'if [ -x vendor/bin/drush ]; then vendor/bin/drush updb -y || true; vendor/bin/drush cim -y || true; vendor/bin/drush cr || true; vendor/bin/drush sset system.maintenance_mode 0 || true; vendor/bin/drush cr || true; fi'
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would run drush updb/cim/cr and disable maintenance mode on target"
+else
+  docker exec -i "$TGT_FPM" sh -c 'if [ -x vendor/bin/drush ]; then vendor/bin/drush updb -y || true; vendor/bin/drush cim -y || true; vendor/bin/drush cr || true; vendor/bin/drush sset system.maintenance_mode 0 || true; vendor/bin/drush cr || true; fi'
+fi
+
+# Optional S3 upload of backups
+if [ -n "$S3_BUCKET" ]; then
+  echo "S3 upload requested: bucket=$S3_BUCKET"
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY-RUN] Would upload backups from $BACKUP_DIR to s3://$S3_BUCKET/"
+  else
+    if command -v aws >/dev/null 2>&1; then
+      base=$(basename "$BACKUP_DIR")
+      echo "Uploading $BACKUP_DIR to s3://$S3_BUCKET/$base/"
+      aws s3 cp "$BACKUP_DIR/target-db.sql.gz" "s3://$S3_BUCKET/$base/" --only-show-errors || true
+      aws s3 cp "$BACKUP_DIR/target-files.tar.gz" "s3://$S3_BUCKET/$base/" --only-show-errors || true
+    else
+      echo "aws CLI not found; skipping S3 upload" >&2
+    fi
+  fi
+fi
 
 echo "Sync finished. Clean temporary files in $TMPDIR" || true
 
