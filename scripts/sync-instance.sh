@@ -64,14 +64,21 @@ echo "Bringing up minimal services in source and target..."
 DRIVER=$(awk -F= '/^DRUPAL_DB_DRIVER/{print $2}' .env.$SRC | tr -d '"' || true)
 DRIVER=${DRIVER:-mysql}
 
+# Determine compose project names (fall back to proj_<env>)
+SRC_PROJECT=$(awk -F= '/^COMPOSE_PROJECT_NAME/{print $2}' .env.$SRC | tr -d '"' || true)
+SRC_PROJECT=${SRC_PROJECT:-proj_$SRC}
+TGT_PROJECT=$(awk -F= '/^COMPOSE_PROJECT_NAME/{print $2}' .env.$TGT | tr -d '"' || true)
+TGT_PROJECT=${TGT_PROJECT:-proj_$TGT}
+
 start_services() {
   local envfile="$1"
-  echo "Starting compose for $envfile (db + drupal)"
-  docker compose --env-file "$envfile" up -d db-mysql db-mariadb db-postgres drupal-fpm || true
+  local project="$2"
+  echo "Starting compose for $envfile (project=$project) (db + drupal)"
+  docker compose --env-file "$envfile" --project-name "$project" up -d db-mysql db-mariadb db-postgres drupal-fpm || true
 }
 
-start_services ".env.$SRC"
-start_services ".env.$TGT"
+start_services ".env.$SRC" "$SRC_PROJECT"
+start_services ".env.$TGT" "$TGT_PROJECT"
 
 wait_container() {
   local name="$1"
@@ -133,13 +140,14 @@ case "$DRIVER" in
     SRC_USER=$(get_env_val .env.$SRC "$SRC_USER_KEY")
     SRC_PASS=$(get_env_val .env.$SRC "$SRC_PASS_KEY")
     SRC_DB=$(get_env_val .env.$SRC "$SRC_DB_KEY")
-    docker exec -i "$SRC_DB_CONTAINER" sh -c "mysqldump --single-transaction --quick --lock-tables=false -u\"$SRC_USER\" -p\"$SRC_PASS\" \"$SRC_DB\"" > "$TMPDIR/db.sql"
+    # use MYSQL_PWD to avoid exposing password in process list and avoid tablespaces
+    docker exec -i -e MYSQL_PWD="$SRC_PASS" "$SRC_DB_CONTAINER" sh -c "mysqldump -u\"$SRC_USER\" --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --skip-lock-tables \"$SRC_DB\"" > "$TMPDIR/db.sql"
     ;;
   postgres)
     SRC_USER=$(get_env_val .env.$SRC "$SRC_USER_KEY")
     SRC_PASS=$(get_env_val .env.$SRC "$SRC_PASS_KEY")
     SRC_DB=$(get_env_val .env.$SRC "$SRC_DB_KEY")
-    docker exec -i "$SRC_DB_CONTAINER" sh -c "PGPASSWORD=\"$SRC_PASS\" pg_dump -U \"$SRC_USER\" -d \"$SRC_DB\"" > "$TMPDIR/db.sql"
+    docker exec -i -e PGPASSWORD="$SRC_PASS" "$SRC_DB_CONTAINER" sh -c "pg_dump -U \"$SRC_USER\" -d \"$SRC_DB\"" > "$TMPDIR/db.sql"
     ;;
 esac
 
@@ -154,7 +162,8 @@ case "$DRIVER" in
     TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
     echo "Backing up target database to $BACKUP_DIR/target-db.sql.gz"
-    docker exec -i "$TGT_DB_CONTAINER" sh -c "mysqldump --single-transaction --quick --lock-tables=false -u\"$TGT_USER\" -p\"$TGT_PASS\" \"$TGT_DB\"" | gzip > "$BACKUP_DIR/target-db.sql.gz"
+    # use MYSQL_PWD to avoid password leakage
+    docker exec -i -e MYSQL_PWD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "mysqldump -u\"$TGT_USER\" --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF --skip-lock-tables \"$TGT_DB\"" | gzip > "$BACKUP_DIR/target-db.sql.gz"
     ;;
   postgres)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
@@ -170,18 +179,23 @@ docker exec -i "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -czf 
 
 echo "Backups written to $BACKUP_DIR"
 
+# Put target into maintenance mode if possible
+echo "Enabling maintenance mode on target (if drush available)"
+docker exec "$TGT_FPM" sh -c 'if [ -x vendor/bin/drush ]; then vendor/bin/drush sset system.maintenance_mode 1 && vendor/bin/drush cr; fi' || true
+
 case "$DRIVER" in
   mysql|mariadb)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
     TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
-    docker exec -i "$TGT_DB_CONTAINER" sh -c "mysql -u\"$TGT_USER\" -p\"$TGT_PASS\" \"$TGT_DB\"" < "$TMPDIR/db.sql"
+    # import using env var for password
+    docker exec -i -e MYSQL_PWD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "mysql -u\"$TGT_USER\" \"$TGT_DB\"" < "$TMPDIR/db.sql"
     ;;
   postgres)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
     TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
-    docker exec -i "$TGT_DB_CONTAINER" sh -c "PGPASSWORD=\"$TGT_PASS\" psql -U \"$TGT_USER\" -d \"$TGT_DB\"" < "$TMPDIR/db.sql"
+    docker exec -i -e PGPASSWORD="$TGT_PASS" "$TGT_DB_CONTAINER" sh -c "psql -U \"$TGT_USER\" -d \"$TGT_DB\"" < "$TMPDIR/db.sql"
     ;;
 esac
 
@@ -189,15 +203,13 @@ echo "Syncing files directory from source drupal-fpm -> target drupal-fpm"
 SRC_FPM=infrasight_drupal_fpm
 TGT_FPM=infrasight_drupal_fpm
 
-echo "Creating archive of files from source container..."
-docker exec -i "$SRC_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -czf - files' > "$TMPDIR/files.tar.gz"
-
-echo "Extracting archive into target container (backup existing files to files.bak)..."
+echo "Streaming files from source container to target container (no host temp)..."
+# prepare target (backup existing files)
 docker exec "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && [ -d files ] && mv files files.bak || true && mkdir -p files'
-cat "$TMPDIR/files.tar.gz" | docker exec -i "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -xzf -'
+docker exec -i "$SRC_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -czf - files' | docker exec -i "$TGT_FPM" sh -c 'cd /var/www/html/web/sites/default && tar -xzf -'
 
-echo "Attempting to rebuild caches in target (drush cr)"
-docker exec -i "$TGT_FPM" sh -c 'if [ -x vendor/bin/drush ]; then vendor/bin/drush cr || true; fi'
+echo "Attempting post-sync tasks on target (drush)"
+docker exec -i "$TGT_FPM" sh -c 'if [ -x vendor/bin/drush ]; then vendor/bin/drush updb -y || true; vendor/bin/drush cim -y || true; vendor/bin/drush cr || true; vendor/bin/drush sset system.maintenance_mode 0 || true; vendor/bin/drush cr || true; fi'
 
 echo "Sync finished. Clean temporary files in $TMPDIR" || true
 
