@@ -89,9 +89,12 @@ set_or_add_env_value() {
   local file="$1"
   local key="$2"
   local value="$3"
+  local escaped_value
+
+  escaped_value="$(printf '%s' "$value" | sed -e 's/[\\&|]/\\\\&/g')"
 
   if grep -qE "^[[:space:]]*${key}=" "$file"; then
-    sed -i "s|^[[:space:]]*${key}=.*|${key}=${value}|" "$file"
+    sed -i "s|^[[:space:]]*${key}=.*|${key}=${escaped_value}|" "$file"
   else
     printf '\n%s=%s\n' "$key" "$value" >> "$file"
   fi
@@ -113,6 +116,63 @@ fallback_base_path_for_env() {
     prod) printf '/srv/prod' ;;
     *) printf '/home/dev/projects' ;;
   esac
+}
+
+infer_env_from_compose_name() {
+  local compose_name="$1"
+  case "$compose_name" in
+    *_dev|-dev) printf 'dev' ;;
+    *_stag|-stag) printf 'stag' ;;
+    *_prod|-prod) printf 'prod' ;;
+    *) printf '' ;;
+  esac
+}
+
+compose_name_matches_env() {
+  local compose_name="$1"
+  local env_name="$2"
+
+  case "$env_name" in
+    dev)
+      [[ "$compose_name" == *_dev || "$compose_name" == *-dev ]]
+      ;;
+    stag)
+      [[ "$compose_name" == *_stag || "$compose_name" == *-stag ]]
+      ;;
+    prod)
+      [[ "$compose_name" == *_prod || "$compose_name" == *-prod ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+public_domain_is_valid() {
+  local domain="$1"
+  if [ -z "$domain" ]; then
+    return 0
+  fi
+
+  if [[ "$domain" == *"://"* || "$domain" == */* || "$domain" == *" "* ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+tcp_port_is_valid() {
+  local port_value="$1"
+
+  if [ -z "$port_value" ]; then
+    return 0
+  fi
+
+  if [[ ! "$port_value" =~ ^[0-9]+$ ]] || [ "$port_value" -lt 1 ] || [ "$port_value" -gt 65535 ]; then
+    return 1
+  fi
+
+  return 0
 }
 
 while getopts ":n:p:e:c:d:fyhr-:" opt; do
@@ -139,6 +199,15 @@ while getopts ":n:p:e:c:d:fyhr-:" opt; do
 done
 
 if [ -z "$STACK_ENV" ]; then
+  STACK_ENV="$(to_lower "$(trim "$(read_env_value "$TEMPLATE_ROOT/.env" "STACK_ENV" || true)")")"
+fi
+
+if [ -z "$STACK_ENV" ]; then
+  ACTIVE_COMPOSE_NAME="$(trim "$(read_env_value "$TEMPLATE_ROOT/.env" "COMPOSE_PROJECT_NAME" || true)")"
+  STACK_ENV="$(infer_env_from_compose_name "$ACTIVE_COMPOSE_NAME")"
+fi
+
+if [ -z "$STACK_ENV" ]; then
   if [ "$NO_INPUT" -eq 1 ]; then
     echo "Missing required: environment (-e) in non-interactive mode" >&2
     usage; exit 1
@@ -159,12 +228,40 @@ if [ ! -f "$ENV_SOURCE_FILE" ]; then
 fi
 
 if [ -z "$PROJECT_NAME" ]; then
-  if [ "$NO_INPUT" -eq 1 ]; then
-    echo "Missing required: project name (-n) in non-interactive mode" >&2
-    usage; exit 1
+  DEFAULT_PROJECT_NAME="$(trim "$(read_env_value "$ENV_SOURCE_FILE" "PROJECT_NAME" || true)")"
+
+  if [ -z "$DEFAULT_PROJECT_NAME" ]; then
+    SOURCE_PROJECT_COMPOSE_NAME="$(trim "$(read_env_value "$ENV_SOURCE_FILE" "COMPOSE_PROJECT_NAME" || true)")"
+    if [ -n "$SOURCE_PROJECT_COMPOSE_NAME" ]; then
+      DEFAULT_PROJECT_NAME="$SOURCE_PROJECT_COMPOSE_NAME"
+      DEFAULT_PROJECT_NAME="${DEFAULT_PROJECT_NAME%_${STACK_ENV}}"
+      DEFAULT_PROJECT_NAME="${DEFAULT_PROJECT_NAME%-${STACK_ENV}}"
+    fi
   fi
-  read -rp "Projektname: " PROJECT_NAME
-  PROJECT_NAME="$(trim "$PROJECT_NAME")"
+
+  if [ -z "$DEFAULT_PROJECT_NAME" ]; then
+    SOURCE_COMPOSER_NAME="$(trim "$(read_env_value "$ENV_SOURCE_FILE" "COMPOSER_PROJECT_NAME" || true)")"
+    if [ -n "$SOURCE_COMPOSER_NAME" ]; then
+      DEFAULT_PROJECT_NAME="${SOURCE_COMPOSER_NAME##*/}"
+    fi
+  fi
+
+  if [ -n "$DEFAULT_PROJECT_NAME" ]; then
+    PROJECT_NAME="$DEFAULT_PROJECT_NAME"
+  fi
+
+  if [ "$NO_INPUT" -eq 1 ]; then
+    if [ -z "$PROJECT_NAME" ]; then
+      echo "Missing required: project name (-n) in non-interactive mode" >&2
+      usage; exit 1
+    fi
+  else
+    read -rp "Projektname${PROJECT_NAME:+ [$PROJECT_NAME]}: " input_project
+    input_project="$(trim "$input_project")"
+    if [ -n "$input_project" ]; then
+      PROJECT_NAME="$input_project"
+    fi
+  fi
 fi
 
 # Validate project name: disallow slashes and path-traversal
@@ -205,10 +302,12 @@ if [ -z "$TARGET_BASE_PATH" ]; then
   if [ -z "$TARGET_BASE_PATH" ]; then
     TARGET_BASE_PATH="$(fallback_base_path_for_env "$STACK_ENV")"
   fi
-  read -rp "Speicherort/Basispfad [$TARGET_BASE_PATH]: " input_path
-  input_path="$(trim "$input_path")"
-  if [ -n "$input_path" ]; then
-    TARGET_BASE_PATH="$input_path"
+  if [ "$NO_INPUT" -eq 0 ]; then
+    read -rp "Speicherort/Basispfad [$TARGET_BASE_PATH]: " input_path
+    input_path="$(trim "$input_path")"
+    if [ -n "$input_path" ]; then
+      TARGET_BASE_PATH="$input_path"
+    fi
   fi
 fi
 
@@ -216,6 +315,18 @@ TARGET_BASE_PATH="$(trim "$TARGET_BASE_PATH")"
 if [ -z "$TARGET_BASE_PATH" ]; then
   echo "Basispfad darf nicht leer sein." >&2
   exit 1
+fi
+
+# Prefer explicit COMPOSE_PROJECT_NAME from env template; fallback to slug+env
+SOURCE_COMPOSE_NAME="$(read_env_value "$ENV_SOURCE_FILE" "COMPOSE_PROJECT_NAME" || true)"
+if [ -n "$SOURCE_COMPOSE_NAME" ]; then
+  DEFAULT_COMPOSE_PROJECT_NAME="$SOURCE_COMPOSE_NAME"
+else
+  DEFAULT_COMPOSE_PROJECT_NAME="${PROJECT_SLUG}_${STACK_ENV}"
+fi
+
+if ! compose_name_matches_env "$DEFAULT_COMPOSE_PROJECT_NAME" "$STACK_ENV"; then
+  echo "Warnung: COMPOSE_PROJECT_NAME '$DEFAULT_COMPOSE_PROJECT_NAME' passt nicht zu STACK_ENV '$STACK_ENV' (erwartetes Suffix: _$STACK_ENV oder -$STACK_ENV)." >&2
 fi
 
 DEFAULT_COMPOSER_FROM_ENV="$(read_env_value "$ENV_SOURCE_FILE" "COMPOSER_PROJECT_NAME" || true)"
@@ -255,6 +366,23 @@ if [ -z "$PUBLIC_DOMAIN_OVERRIDE" ]; then
       read -rp "PUBLIC_DOMAIN: " input_domain
       PUBLIC_DOMAIN_OVERRIDE="$(trim "$input_domain")"
     fi
+  fi
+fi
+
+SOURCE_REVERSE_PROXY_PORT="$(read_env_value "$ENV_SOURCE_FILE" "REVERSE_PROXY_HOST_PORT" || true)"
+if ! public_domain_is_valid "$PUBLIC_DOMAIN_OVERRIDE"; then
+  echo "Warnung: PUBLIC_DOMAIN '$PUBLIC_DOMAIN_OVERRIDE' sieht ungültig aus (erwartet Hostname ohne Schema/Pfad)." >&2
+  if [ "$NO_INPUT" -eq 1 ]; then
+    echo "Non-interactive: Abbruch wegen ungültigem PUBLIC_DOMAIN." >&2
+    exit 1
+  fi
+fi
+
+if ! tcp_port_is_valid "$SOURCE_REVERSE_PROXY_PORT"; then
+  echo "Warnung: REVERSE_PROXY_HOST_PORT='$SOURCE_REVERSE_PROXY_PORT' ist kein gültiger TCP-Port (1-65535)." >&2
+  if [ "$NO_INPUT" -eq 1 ]; then
+    echo "Non-interactive: Abbruch wegen ungültigem REVERSE_PROXY_HOST_PORT." >&2
+    exit 1
   fi
 fi
 
@@ -308,9 +436,15 @@ fi
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "+ would set STACK_ENV=$STACK_ENV in $TARGET_ENV_FILE"
   echo "+ would set COMPOSER_PROJECT_NAME=$COMPOSER_PROJECT_NAME in $TARGET_ENV_FILE"
+  echo "+ would set COMPOSE_PROJECT_NAME=$DEFAULT_COMPOSE_PROJECT_NAME in $TARGET_ENV_FILE"
+  echo "+ would set CONTAINER_PREFIX=${PROJECT_SLUG}_${STACK_ENV} in $TARGET_ENV_FILE"
+  echo "+ would set TRAEFIK_PREFIX=${PROJECT_SLUG}-${STACK_ENV} in $TARGET_ENV_FILE"
 else
   set_or_add_env_value "$TARGET_ENV_FILE" "STACK_ENV" "$STACK_ENV"
   set_or_add_env_value "$TARGET_ENV_FILE" "COMPOSER_PROJECT_NAME" "$COMPOSER_PROJECT_NAME"
+  set_or_add_env_value "$TARGET_ENV_FILE" "COMPOSE_PROJECT_NAME" "$DEFAULT_COMPOSE_PROJECT_NAME"
+  set_or_add_env_value "$TARGET_ENV_FILE" "CONTAINER_PREFIX" "${PROJECT_SLUG}_${STACK_ENV}"
+  set_or_add_env_value "$TARGET_ENV_FILE" "TRAEFIK_PREFIX" "${PROJECT_SLUG}-${STACK_ENV}"
 fi
 
 if [ -n "$PUBLIC_DOMAIN_OVERRIDE" ]; then

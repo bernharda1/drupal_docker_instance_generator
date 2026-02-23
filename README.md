@@ -45,6 +45,14 @@ scripts/create-instance.sh -n shop360 -p /srv/prod -e prod -d www.shop360.exampl
 Hinweis: Der Composer-Name wird aus `COMPOSER_PROJECT_NAME` der jeweiligen `.env.<env>` gelesen und in `drupal/composer.json` als `name` eingetragen.
 Der Standard-Zielpfad wird aus `PROJECT_BASE_PATH` der jeweiligen `.env.<env>` gelesen.
 
+### Preflight-Checkliste vor `create-instance.sh`
+
+- `STACK_ENV` korrekt (`dev`, `stag`, `prod`)
+- `PUBLIC_DOMAIN` als Hostname ohne `http(s)://` und ohne Pfad
+- `REVERSE_PROXY_HOST_PORT` als numerischer Port (`1..65535`)
+- Zielpfad beschreibbar und Zielordner entweder leer oder Aufruf mit `-f`
+- Optional vorab prüfen mit `scripts/validate-env.sh .env.<env>`
+
 ## Drush/Composer ohne `docker exec`
 
 Im Repo gibt es Wrapper unter `bin/`, die dir das `docker compose exec ...` abnehmen (ähnlich vom Gefühl wie bei Lando):
@@ -76,6 +84,39 @@ docker compose --env-file .env.prod up -d --build
 - Rechtefehler bei `/srv/stag` oder `/srv/prod`: Skript mit einem erlaubten Benutzer ausführen oder Pfad per `-p` auf einen beschreibbaren Ort setzen.
 - Falscher Standard-Zielpfad: `PROJECT_BASE_PATH` in `.env.dev`, `.env.stag`, `.env.prod` anpassen.
 - Falscher Composer-Name: `COMPOSER_PROJECT_NAME` in `.env.<env>` setzen oder beim Aufruf mit `-c` überschreiben.
+
+#### Env-Validierung (`scripts/validate-env.sh`)
+
+Der Generator ruft die Env-Validierung automatisch auf. Du kannst sie auch manuell ausführen:
+
+```bash
+scripts/validate-env.sh .env.dev
+scripts/validate-env.sh .env.stag
+scripts/validate-env.sh .env.prod
+```
+
+Geprüft werden u. a.:
+
+- Pflicht-Keys: `COMPOSER_PROJECT_NAME`, `PROJECT_BASE_PATH`, `CONTAINER_PREFIX`, `STACK_ENV`, `COMPOSE_PROFILES`
+- `PUBLIC_DOMAIN`: muss Hostname ohne Schema/Pfad/Leerzeichen sein
+- `REVERSE_PROXY_HOST_PORT`: muss TCP-Port im Bereich `1..65535` sein
+- Empfehlung: `TRAEFIK_PREFIX` setzen für stabile Traefik-Router-Namen
+
+Exit-Codes:
+
+- `0`: Validierung erfolgreich
+- `2`: Env-Datei fehlt oder ist nicht lesbar
+- `3`: Pflicht-Keys fehlen
+- `4`: Ungültige Env-Werte (z. B. Domain/Port)
+
+Häufige Fehlermeldungen und schnelle Fixes:
+
+- `PUBLIC_DOMAIN must be a hostname ...`
+	- Setze `PUBLIC_DOMAIN` ohne Schema/Pfad, z. B. `PUBLIC_DOMAIN=shop.example.com`
+- `REVERSE_PROXY_HOST_PORT must be a valid TCP port 1-65535`
+	- Setze einen numerischen Port im gültigen Bereich, z. B. `REVERSE_PROXY_HOST_PORT=8088`
+- `Missing required .env keys ...`
+	- Fehlende Keys aus `.env.example` oder der passenden `.env.<env>` ergänzen
 
 Oder über Hilfsskripte:
 

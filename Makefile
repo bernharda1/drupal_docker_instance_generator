@@ -8,7 +8,7 @@ ensure-composer-cache:
 	@mkdir -p $(COMPOSER_CACHE_DIR)
 	@chown -R $$(id -u):$$(id -g) $(COMPOSER_CACHE_DIR) || true
 
-.PHONY: help ensure-composer-cache ensure-node-modules composer-install composer-update composer-require drush-status drush-cr drush-site-install node-ci node-build perms
+.PHONY: help ensure-composer-cache ensure-node-modules composer-install composer-update composer-require validate-env validate-env-dev validate-env-stag validate-env-prod drush-status drush-cr drush-site-install node-ci node-build perms
 
 help:
 	@echo "Usage: make <target> [ENV_FILE=.env.dev|.env.stag|.env.prod]"
@@ -17,6 +17,10 @@ help:
 	@echo "  composer-install    Run composer install"
 	@echo "  composer-update     Run composer update"
 	@echo "  composer-require    Require a composer package"
+	@echo "  validate-env        Validate env file (uses ENV_FILE)"
+	@echo "  validate-env-dev    Validate .env.dev"
+	@echo "  validate-env-stag   Validate .env.stag"
+	@echo "  validate-env-prod   Validate .env.prod"
 	@echo "  drush-status        Show Drupal status"
 	@echo "  drush-cr            Run drush cache rebuild"
 	@echo "  drush-site-install  Run drush site:install"
@@ -26,8 +30,21 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make composer-install ENV_FILE=.env.dev"
+	@echo "  make validate-env ENV_FILE=.env.stag"
 	@echo "  make drush-status ENV_FILE=.env.stag"
 	@echo "  make node-build ENV_FILE=.env.prod"
+
+validate-env:
+	./scripts/validate-env.sh $(ENV_FILE)
+
+validate-env-dev:
+	./scripts/validate-env.sh .env.dev
+
+validate-env-stag:
+	./scripts/validate-env.sh .env.stag
+
+validate-env-prod:
+	./scripts/validate-env.sh .env.prod
 
 composer-install: ensure-composer-cache
 	$(COMPOSE) run --rm composer install --no-interaction
