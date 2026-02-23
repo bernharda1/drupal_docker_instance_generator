@@ -45,6 +45,22 @@ scripts/create-instance.sh -n shop360 -p /srv/prod -e prod -d www.shop360.exampl
 Hinweis: Der Composer-Name wird aus `COMPOSER_PROJECT_NAME` der jeweiligen `.env.<env>` gelesen und in `drupal/composer.json` als `name` eingetragen.
 Der Standard-Zielpfad wird aus `PROJECT_BASE_PATH` der jeweiligen `.env.<env>` gelesen.
 
+## Drush/Composer ohne `docker exec`
+
+Im Repo gibt es Wrapper unter `bin/`, die dir das `docker compose exec ...` abnehmen (ähnlich vom Gefühl wie bei Lando):
+
+```bash
+bin/composer install
+bin/drush status
+bin/drush cr
+```
+
+Wenn du willst, dass du im Projektordner einfach `composer`/`drush` tippen kannst, kannst du `bin/` temporär in deinen `PATH` nehmen:
+
+```bash
+export PATH="$PWD/bin:$PATH"
+```
+
 Oder direkt mit fertigen Umgebungsdateien starten:
 
 ```bash

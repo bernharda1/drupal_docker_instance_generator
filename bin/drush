@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+ENV_FILE="${ENV_FILE:-}"
+
+pick_env_file() {
+  if [ -n "$ENV_FILE" ]; then
+    if [[ "$ENV_FILE" = /* ]]; then
+      printf '%s' "$ENV_FILE"
+    else
+      printf '%s' "$ROOT/$ENV_FILE"
+    fi
+    return 0
+  fi
+
+  if [ -f "$ROOT/.env" ]; then
+    printf '%s' "$ROOT/.env"
+    return 0
+  fi
+
+  # Fallbacks
+  if [ -f "$ROOT/.env.dev" ]; then printf '%s' "$ROOT/.env.dev"; return 0; fi
+  if [ -f "$ROOT/.env.stag" ]; then printf '%s' "$ROOT/.env.stag"; return 0; fi
+  if [ -f "$ROOT/.env.prod" ]; then printf '%s' "$ROOT/.env.prod"; return 0; fi
+
+  return 1
+}
+
+ENV_PATH="$(pick_env_file)" || {
+  echo "No env file found. Expected .env or .env.dev/.env.stag/.env.prod in $ROOT" >&2
+  exit 2
+}
+
+cd "$ROOT"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker not found" >&2
+  exit 127
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+  echo "docker compose (v2) not available" >&2
+  exit 127
+fi
+
+# Ensure the tools container exists (service is in profile "tools").
+docker compose --env-file "$ENV_PATH" up -d drush >/dev/null
+
+TTY_OPT=()
+if ! [ -t 0 ] || ! [ -t 1 ]; then
+  TTY_OPT=(-T)
+fi
+
+exec docker compose --env-file "$ENV_PATH" exec "${TTY_OPT[@]}" drush vendor/bin/drush "$@"

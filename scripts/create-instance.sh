@@ -11,6 +11,7 @@ COMPOSER_PROJECT_NAME="${COMPOSER_PROJECT_NAME:-}"
 PUBLIC_DOMAIN_OVERRIDE="${PUBLIC_DOMAIN_OVERRIDE:-}"
 FORCE=0
 NO_INPUT=0
+DRY_RUN=0
 
 usage() {
   cat <<'EOF'
@@ -27,12 +28,30 @@ Optionen:
   -d <domain>     PUBLIC_DOMAIN Override
   -y              Non-interactive, nutze Defaults oder error bei fehlenden Werten
   -f              Existierendes Zielverzeichnis überschreiben
+  -r, --dry-run   Keine Änderungen durchführen, nur ausgeben (Simulation)
   -h              Hilfe anzeigen
 
 Beispiele:
   scripts/create-instance.sh -n shop360 -p /home/dev/projects -e dev
   scripts/create-instance.sh -n shop360 -p /srv/stag -e stag -d shop360-stag.example.com
 EOF
+}
+
+print_cmd() {
+  printf '+ '
+  local arg
+  for arg in "$@"; do
+    printf '%q ' "$arg"
+  done
+  printf '\n'
+}
+
+run_cmd() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_cmd "$@"
+    return 0
+  fi
+  "$@"
 }
 
 trim() {
@@ -96,7 +115,7 @@ fallback_base_path_for_env() {
   esac
 }
 
-while getopts ":n:p:e:c:d:fyh" opt; do
+while getopts ":n:p:e:c:d:fyhr-:" opt; do
   case "$opt" in
     n) PROJECT_NAME="$(trim "$OPTARG")" ;;
     p) TARGET_BASE_PATH="$(trim "$OPTARG")" ;;
@@ -105,6 +124,14 @@ while getopts ":n:p:e:c:d:fyh" opt; do
     d) PUBLIC_DOMAIN_OVERRIDE="$(trim "$OPTARG")" ;;
     f) FORCE=1 ;;
     y) NO_INPUT=1 ;;
+    r) DRY_RUN=1 ;;
+    -)
+      case "${OPTARG}" in
+        dry-run) DRY_RUN=1 ;;
+        help) usage; exit 0 ;;
+        *) echo "Unbekannte Option: --${OPTARG}" >&2; usage; exit 1 ;;
+      esac
+      ;;
     h) usage; exit 0 ;;
     :) echo "Fehlender Wert für -$OPTARG" >&2; usage; exit 1 ;;
     \?) echo "Unbekannte Option: -$OPTARG" >&2; usage; exit 1 ;;
@@ -253,28 +280,48 @@ if [ -d "$TARGET_DIR" ] && [ "$(find "$TARGET_DIR" -mindepth 1 -maxdepth 1 2>/de
       exit 1
     fi
   fi
-  rm -rf "$TARGET_DIR"
+  run_cmd rm -rf "$TARGET_DIR"
 fi
 
-mkdir -p "$TARGET_DIR"
+run_cmd mkdir -p "$TARGET_DIR"
 
-cp -a "$TEMPLATE_ROOT/." "$TARGET_DIR/"
-rm -rf "$TARGET_DIR/.git" "$TARGET_DIR/.github"
+run_cmd cp -a "$TEMPLATE_ROOT/." "$TARGET_DIR/"
+run_cmd rm -rf "$TARGET_DIR/.git" "$TARGET_DIR/.github"
 
-TARGET_ENV_FILE="$TARGET_DIR/.env"
-cp "$ENV_SOURCE_FILE" "$TARGET_ENV_FILE"
+# Use environment-specific env file as primary source of truth, since the helper scripts
+# expect .env.dev/.env.stag/.env.prod. Also keep .env in sync for convenience.
+TARGET_ENV_FILE="$TARGET_DIR/.env.$STACK_ENV"
+run_cmd cp "$ENV_SOURCE_FILE" "$TARGET_ENV_FILE"
 
-set_or_add_env_value "$TARGET_ENV_FILE" "STACK_ENV" "$STACK_ENV"
-set_or_add_env_value "$TARGET_ENV_FILE" "COMPOSER_PROJECT_NAME" "$COMPOSER_PROJECT_NAME"
+# Keep .env pointing to the selected environment file.
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "+ would link $TARGET_DIR/.env -> .env.$STACK_ENV"
+else
+  ln -sf ".env.$STACK_ENV" "$TARGET_DIR/.env"
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "+ would set STACK_ENV=$STACK_ENV in $TARGET_ENV_FILE"
+  echo "+ would set COMPOSER_PROJECT_NAME=$COMPOSER_PROJECT_NAME in $TARGET_ENV_FILE"
+else
+  set_or_add_env_value "$TARGET_ENV_FILE" "STACK_ENV" "$STACK_ENV"
+  set_or_add_env_value "$TARGET_ENV_FILE" "COMPOSER_PROJECT_NAME" "$COMPOSER_PROJECT_NAME"
+fi
 
 if [ -n "$PUBLIC_DOMAIN_OVERRIDE" ]; then
-  set_or_add_env_value "$TARGET_ENV_FILE" "PUBLIC_DOMAIN" "$PUBLIC_DOMAIN_OVERRIDE"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "+ would set PUBLIC_DOMAIN=$PUBLIC_DOMAIN_OVERRIDE in $TARGET_ENV_FILE"
+  else
+    set_or_add_env_value "$TARGET_ENV_FILE" "PUBLIC_DOMAIN" "$PUBLIC_DOMAIN_OVERRIDE"
+  fi
 fi
 
 #  -- Validate generated .env
 VALIDATE_SCRIPT="$TEMPLATE_ROOT/scripts/validate-env.sh"
 if [ -x "$VALIDATE_SCRIPT" ]; then
-  if ! "$VALIDATE_SCRIPT" "$TARGET_ENV_FILE"; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    print_cmd "$VALIDATE_SCRIPT" "$TARGET_ENV_FILE"
+  elif ! "$VALIDATE_SCRIPT" "$TARGET_ENV_FILE"; then
     if [ "$NO_INPUT" -eq 1 ]; then
       echo "Env validation failed and running in non-interactive mode. Aborting." >&2
       exit 1
@@ -290,7 +337,10 @@ fi
 if command -v docker >/dev/null 2>&1; then
   if docker compose --help >/dev/null 2>&1; then
     echo "Führe 'docker compose config' im Zielordner aus, um Compose-Fehler zu erkennen..."
-    (cd "$TARGET_DIR" && docker compose --env-file .env config) >/dev/null 2>&1 || {
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "+ (cd $TARGET_DIR && docker compose --env-file .env config)"
+    else
+      (cd "$TARGET_DIR" && docker compose --env-file .env config) >/dev/null 2>&1 || {
       echo "docker compose config failed for generated instance." >&2
       if [ "$NO_INPUT" -eq 1 ]; then
         echo "Non-interactive: Abbruch." >&2
@@ -299,7 +349,8 @@ if command -v docker >/dev/null 2>&1; then
         echo "Compose config Check fehlgeschlagen. Öffne $TARGET_ENV_FILE oder docker-compose.yml und korrigiere, dann Enter zum Fortfahren." >&2
         read -r
       fi
-    }
+      }
+    fi
   else
     echo "docker compose scheint nicht verfügbar (keine Unterstützung). Überspringe Compose-Check."
   fi
@@ -308,21 +359,35 @@ else
 fi
 
 TARGET_COMPOSER_JSON="$TARGET_DIR/drupal/composer.json"
-if [ ! -f "$TARGET_COMPOSER_JSON" ]; then
-  echo "Warnung: composer.json nicht gefunden unter $TARGET_COMPOSER_JSON" >&2
-else
-  # Update composer.json safely: prefer jq, fallback to perl replacement with proper escaping
-  if command -v jq >/dev/null 2>&1; then
-    tmpfile=$(mktemp)
-    jq --arg name "$COMPOSER_PROJECT_NAME" '.name = $name' "$TARGET_COMPOSER_JSON" > "$tmpfile" && mv "$tmpfile" "$TARGET_COMPOSER_JSON"
+TEMPLATE_COMPOSER_JSON="$TEMPLATE_ROOT/drupal/composer.json"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  if [ -f "$TEMPLATE_COMPOSER_JSON" ]; then
+    echo "+ would update $TARGET_COMPOSER_JSON: set .name = $COMPOSER_PROJECT_NAME"
   else
-    # Escape double quotes and backslashes for perl
-    esc=$(printf '%s' "$COMPOSER_PROJECT_NAME" | perl -pe 's/([\\"\\\\])/\\$1/g')
-    perl -0777 -pe "s/\"name\"\s*:\s*\"[^\"]*\"/\"name\": \"$esc\"/s" -i "$TARGET_COMPOSER_JSON"
+    echo "Warnung: Template composer.json nicht gefunden unter $TEMPLATE_COMPOSER_JSON" >&2
+  fi
+else
+  if [ ! -f "$TARGET_COMPOSER_JSON" ]; then
+    echo "Warnung: composer.json nicht gefunden unter $TARGET_COMPOSER_JSON" >&2
+  else
+    # Update composer.json safely: prefer jq, fallback to perl replacement with proper escaping
+    if command -v jq >/dev/null 2>&1; then
+      tmpfile=$(mktemp)
+      jq --arg name "$COMPOSER_PROJECT_NAME" '.name = $name' "$TARGET_COMPOSER_JSON" > "$tmpfile" && mv "$tmpfile" "$TARGET_COMPOSER_JSON"
+    else
+      # Escape double quotes and backslashes for perl
+      esc=$(printf '%s' "$COMPOSER_PROJECT_NAME" | perl -pe 's/([\\"\\\\])/\\$1/g')
+      perl -0777 -pe "s/\"name\"\s*:\s*\"[^\"]*\"/\"name\": \"$esc\"/s" -i "$TARGET_COMPOSER_JSON"
+    fi
   fi
 fi
 
-echo "Instanz erfolgreich erstellt."
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "Dry-run: Keine Änderungen durchgeführt (Simulation)."
+else
+  echo "Instanz erfolgreich erstellt."
+fi
 echo "  Projekt      : $PROJECT_NAME"
 echo "  Umgebung     : $STACK_ENV"
 echo "  Zielpfad     : $TARGET_DIR"
@@ -333,7 +398,11 @@ if [ -n "$PUBLIC_DOMAIN_OVERRIDE" ]; then
 fi
 
 echo
-echo "Nächste Schritte:"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "Nächste Schritte (nur Hinweis, da dry-run):"
+else
+  echo "Nächste Schritte:"
+fi
 echo "  cd $TARGET_DIR"
 echo "  scripts/set-permissions.sh -n -v"
 echo "  scripts/up-${STACK_ENV}.sh"
