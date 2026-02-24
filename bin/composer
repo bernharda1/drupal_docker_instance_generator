@@ -5,6 +5,32 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ENV_FILE="${ENV_FILE:-}"
 
+resolve_run_uid_gid() {
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
+    RUN_UID="$SUDO_UID"
+    RUN_GID="${SUDO_GID:-$SUDO_UID}"
+  else
+    RUN_UID="$(id -u)"
+    RUN_GID="$(id -g)"
+  fi
+}
+
+prepare_composer_cache_dir() {
+  local cache_dir="$ROOT/.cache/composer"
+
+  mkdir -p "$cache_dir"
+
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
+    chown -R "$RUN_UID:$RUN_GID" "$ROOT/.cache" 2>/dev/null || true
+  fi
+
+  if [ ! -w "$cache_dir" ]; then
+    echo "Composer cache dir is not writable: $cache_dir" >&2
+    echo "Run: sudo chown -R $RUN_UID:$RUN_GID $ROOT/.cache" >&2
+    exit 1
+  fi
+}
+
 pick_env_file() {
   if [ -n "$ENV_FILE" ]; then
     if [[ "$ENV_FILE" = /* ]]; then
@@ -35,6 +61,9 @@ ENV_PATH="$(pick_env_file)" || {
 
 cd "$ROOT"
 
+resolve_run_uid_gid
+prepare_composer_cache_dir
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found" >&2
   exit 127
@@ -45,11 +74,11 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 127
 fi
 
-docker compose --env-file "$ENV_PATH" up -d composer >/dev/null
+env UID="$RUN_UID" GID="$RUN_GID" docker compose --env-file "$ENV_PATH" up -d composer >/dev/null
 
 TTY_OPT=()
 if ! [ -t 0 ] || ! [ -t 1 ]; then
   TTY_OPT=(-T)
 fi
 
-exec docker compose --env-file "$ENV_PATH" exec "${TTY_OPT[@]}" composer composer "$@"
+exec env UID="$RUN_UID" GID="$RUN_GID" docker compose --env-file "$ENV_PATH" exec "${TTY_OPT[@]}" composer composer "$@"

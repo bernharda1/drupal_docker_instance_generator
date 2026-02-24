@@ -116,7 +116,7 @@ services:
     cpus: ${WEB_APACHE_CPUS:-0.50}
 
   web-openlitespeed:
-    image: litespeedtech/openlitespeed:1.8.2-lsphp84
+    image: ${OPENLITESPEED_IMAGE:-litespeedtech/openlitespeed:latest}
     container_name: infrasight_web_openlitespeed
     hostname: ${WEB_HOSTNAME:-web-openlitespeed}
     restart: unless-stopped
@@ -128,8 +128,8 @@ services:
     volumes:
       - ./drupal:/var/www/html:ro
       - drupal_public_files:/var/www/html/web/sites/default/files:ro
-      - ./config/openlitespeed/httpd_config.conf:/usr/local/lsws/conf/httpd_config.conf:ro
-      - ./config/openlitespeed/vhconf.conf:/usr/local/lsws/conf/vhosts/Example/vhconf.conf:ro
+      - ./config/openlitespeed/httpd_config.conf:/usr/local/lsws/conf/httpd_config.conf
+      - ./config/openlitespeed/vhconf.conf:/usr/local/lsws/conf/vhosts/Example/vhconf.conf
     networks:
       app_net: {}
       edge_net: {}

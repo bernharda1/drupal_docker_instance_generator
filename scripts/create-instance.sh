@@ -175,6 +175,91 @@ tcp_port_is_valid() {
   return 0
 }
 
+escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\\&|]/\\\\&/g'
+}
+
+normalize_ols_vhost_name() {
+  local host="$1"
+  local normalized
+  normalized="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//')"
+  if [ -z "$normalized" ]; then
+    normalized="site"
+  fi
+  printf 'vh_%s' "$normalized"
+}
+
+profiles_include() {
+  local profiles="$1"
+  local profile="$2"
+  local normalized
+
+  normalized="$(printf '%s' "$profiles" | tr -d '[:space:]')"
+  case ",$normalized," in
+    *",$profile,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_upstream_host_from_profiles() {
+  local profiles="$1"
+
+  if profiles_include "$profiles" "web-ols"; then
+    printf 'web-openlitespeed'
+    return 0
+  fi
+
+  if profiles_include "$profiles" "web-apache"; then
+    printf 'web-apache'
+    return 0
+  fi
+
+  printf 'web-nginx'
+}
+
+apply_domain_to_server_configs() {
+  local target_dir="$1"
+  local domain="$2"
+  local domain_escaped
+  local ols_vhost
+  local ols_vhost_escaped
+
+  domain_escaped="$(escape_sed_replacement "$domain")"
+  ols_vhost="$(normalize_ols_vhost_name "$domain")"
+  ols_vhost_escaped="$(escape_sed_replacement "$ols_vhost")"
+
+  local nginx_conf="$target_dir/config/nginx/web-nginx.conf"
+  local apache_conf="$target_dir/config/apache/httpd.conf"
+  local ols_httpd_conf="$target_dir/config/openlitespeed/httpd_config.conf"
+  local ols_vh_conf="$target_dir/config/openlitespeed/vhconf.conf"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    [ -f "$nginx_conf" ] && echo "+ would set nginx server_name to $domain in $nginx_conf"
+    [ -f "$apache_conf" ] && echo "+ would set apache ServerName to $domain in $apache_conf"
+    [ -f "$ols_httpd_conf" ] && echo "+ would set OLS serverName/map/virtualHost ($ols_vhost) in $ols_httpd_conf"
+    [ -f "$ols_vh_conf" ] && echo "+ would set OLS vhDomain to $domain in $ols_vh_conf"
+    return 0
+  fi
+
+  if [ -f "$nginx_conf" ]; then
+    sed -i -E "s|^[[:space:]]*server_name[[:space:]]+[^;]+;|    server_name ${domain_escaped};|" "$nginx_conf"
+  fi
+
+  if [ -f "$apache_conf" ]; then
+    sed -i -E "s|^[[:space:]]*ServerName[[:space:]]+.*|ServerName ${domain_escaped}|" "$apache_conf"
+  fi
+
+  if [ -f "$ols_httpd_conf" ]; then
+    sed -i -E "s|^[[:space:]]*serverName[[:space:]]+.*|serverName                ${domain_escaped}|" "$ols_httpd_conf"
+    sed -i -E "s|^[[:space:]]*map[[:space:]]+[A-Za-z0-9_-]+[[:space:]]+\*|  map                     ${ols_vhost_escaped} *|" "$ols_httpd_conf"
+    sed -i -E "s|^[[:space:]]*virtualHost[[:space:]]+[A-Za-z0-9_-]+[[:space:]]*\{|virtualHost ${ols_vhost_escaped} {|" "$ols_httpd_conf"
+  fi
+
+  if [ -f "$ols_vh_conf" ]; then
+    sed -i -E "s|^[[:space:]]*vhDomain[[:space:]]+.*|vhDomain                  ${domain_escaped}|" "$ols_vh_conf"
+  fi
+}
+
 while getopts ":n:p:e:c:d:fyhr-:" opt; do
   case "$opt" in
     n) PROJECT_NAME="$(trim "$OPTARG")" ;;
@@ -452,6 +537,31 @@ if [ -n "$PUBLIC_DOMAIN_OVERRIDE" ]; then
     echo "+ would set PUBLIC_DOMAIN=$PUBLIC_DOMAIN_OVERRIDE in $TARGET_ENV_FILE"
   else
     set_or_add_env_value "$TARGET_ENV_FILE" "PUBLIC_DOMAIN" "$PUBLIC_DOMAIN_OVERRIDE"
+  fi
+fi
+
+TARGET_PUBLIC_DOMAIN="$(trim "$(read_env_value "$TARGET_ENV_FILE" "PUBLIC_DOMAIN" || true)")"
+if [ -z "$TARGET_PUBLIC_DOMAIN" ]; then
+  if [ -n "$PUBLIC_DOMAIN_OVERRIDE" ]; then
+    TARGET_PUBLIC_DOMAIN="$PUBLIC_DOMAIN_OVERRIDE"
+  else
+    TARGET_PUBLIC_DOMAIN="$(trim "$(read_env_value "$ENV_SOURCE_FILE" "PUBLIC_DOMAIN" || true)")"
+  fi
+fi
+if [ -n "$TARGET_PUBLIC_DOMAIN" ]; then
+  apply_domain_to_server_configs "$TARGET_DIR" "$TARGET_PUBLIC_DOMAIN"
+fi
+
+TARGET_COMPOSE_PROFILES="$(trim "$(read_env_value "$TARGET_ENV_FILE" "COMPOSE_PROFILES" || true)")"
+if [ -z "$TARGET_COMPOSE_PROFILES" ]; then
+  TARGET_COMPOSE_PROFILES="$(trim "$(read_env_value "$ENV_SOURCE_FILE" "COMPOSE_PROFILES" || true)")"
+fi
+if profiles_include "$TARGET_COMPOSE_PROFILES" "reverse-proxy"; then
+  TARGET_UPSTREAM_HOST="$(resolve_upstream_host_from_profiles "$TARGET_COMPOSE_PROFILES")"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "+ would set UPSTREAM_HOST=$TARGET_UPSTREAM_HOST in $TARGET_ENV_FILE (from COMPOSE_PROFILES=$TARGET_COMPOSE_PROFILES)"
+  else
+    set_or_add_env_value "$TARGET_ENV_FILE" "UPSTREAM_HOST" "$TARGET_UPSTREAM_HOST"
   fi
 fi
 

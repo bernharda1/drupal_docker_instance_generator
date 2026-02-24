@@ -45,6 +45,17 @@ scripts/create-instance.sh -n shop360 -p /srv/prod -e prod -d www.shop360.exampl
 Hinweis: Der Composer-Name wird aus `COMPOSER_PROJECT_NAME` der jeweiligen `.env.<env>` gelesen und in `drupal/composer.json` als `name` eingetragen.
 Der Standard-Zielpfad wird aus `PROJECT_BASE_PATH` der jeweiligen `.env.<env>` gelesen.
 
+`create-instance.sh` setzt außerdem `PUBLIC_DOMAIN` direkt in die Server-Konfigurationen:
+- `config/nginx/web-nginx.conf` (`server_name`)
+- `config/apache/httpd.conf` (`ServerName`)
+- `config/openlitespeed/httpd_config.conf` (`serverName`, `map`, `virtualHost`)
+- `config/openlitespeed/vhconf.conf` (`vhDomain`)
+
+Wenn `COMPOSE_PROFILES` das Profil `reverse-proxy` enthält, setzt der Generator `UPSTREAM_HOST` automatisch passend zum aktiven Webprofil:
+- `web-ols` → `web-openlitespeed`
+- `web-apache` → `web-apache`
+- sonst → `web-nginx`
+
 ### Preflight-Checkliste vor `create-instance.sh`
 
 - `STACK_ENV` korrekt (`dev`, `stag`, `prod`)
@@ -61,6 +72,12 @@ Im Repo gibt es Wrapper unter `bin/`, die dir das `docker compose exec ...` abne
 bin/composer install
 bin/drush status
 bin/drush cr
+```
+
+Die Wrapper sind `sudo`-kompatibel und verwenden bei Bedarf automatisch `SUDO_UID`/`SUDO_GID`. Falls der Composer-Cache einmal mit falschem Owner angelegt wurde, hilft:
+
+```bash
+sudo chown -R $(id -u):$(id -g) .cache
 ```
 
 Wenn du willst, dass du im Projektordner einfach `composer`/`drush` tippen kannst, kannst du `bin/` temporär in deinen `PATH` nehmen:
@@ -262,9 +279,9 @@ Empfohlene `.env`-Beispiele:
 
 ```bash
 # DEV
-COMPOSE_PROFILES=web-nginx,reverse-proxy,db-mysql,cache-redis,phpmyadmin,mailpit,tools
+COMPOSE_PROFILES=web-ols,db-mysql,cache-redis,phpmyadmin,tools
 EDGE_NETWORK_NAME=dev_net
-UPSTREAM_HOST=web-nginx
+UPSTREAM_HOST=web-openlitespeed
 DRUPAL_DB_HOST=db-mysql
 
 # STAGING
