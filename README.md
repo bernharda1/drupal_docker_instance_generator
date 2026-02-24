@@ -162,6 +162,10 @@ scripts/up-stag.sh
 scripts/up-prod.sh
 ```
 
+`scripts/up-dev.sh` ruft automatisch `scripts/ensure-settings-local.sh` auf, damit `drupal/web/sites/default/settings.php` vorhanden und für den Installer schreibbar ist.
+
+Nach Installation/Änderungen kann die Datei mit `scripts/lock-settings.sh` wieder auf `0444` gesetzt werden.
+
 Mit optionalem IPv6-Override-Modus:
 
 ```bash
@@ -316,20 +320,20 @@ Empfohlene `.env`-Beispiele:
 COMPOSE_PROFILES=web-ols,db-mysql,cache-redis,phpmyadmin,tools
 EDGE_NETWORK_NAME=dev_net
 UPSTREAM_HOST=web-openlitespeed
-DRUPAL_DB_HOST=db-mysql
+DB_HOST=db-mysql
 
 # STAGING
 COMPOSE_PROFILES=web-nginx,reverse-proxy,db-mysql,cache-redis,tools
 EDGE_NETWORK_NAME=stag_net
 UPSTREAM_HOST=web-nginx
-DRUPAL_DB_HOST=db-mysql
+DB_HOST=db-mysql
 
 # PROD (Beispiel ohne internen Reverse-Proxy)
 COMPOSE_PROFILES=web-nginx,db-postgres,cache-redis,tools
 EDGE_NETWORK_NAME=prod_net
-DRUPAL_DB_DRIVER=pgsql
-DRUPAL_DB_HOST=db-postgres
-DRUPAL_DB_PORT=5432
+DB_DRIVER=pgsql
+DB_HOST=db-postgres
+DB_PORT=5432
 ```
 
 Best Practice: `phpmyadmin` nur mit `db-mysql`/`db-mariadb` nutzen; für `db-postgres` stattdessen pgAdmin in einem separaten Profil ergänzen.

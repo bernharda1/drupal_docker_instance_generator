@@ -3,6 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+if [ -x ./scripts/ensure-settings-local.sh ]; then
+  ./scripts/ensure-settings-local.sh
+fi
+
 mode="${1:-default}"
 
 case "$mode" in

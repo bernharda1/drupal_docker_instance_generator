@@ -61,8 +61,8 @@ echo "Setze Berechtigungen für Drupal-Instanz in: $DRUPAL_DIR (user: $WWWUSER:$
 
 # 1) Basisrechte: Verzeichnisse 755, Dateien 644 innerhalb des Web-Roots
 if [ -d "$DOCROOT" ]; then
-  run "find '$DOCROOT' -type d -print -exec chmod 0755 {} +"
-  run "find '$DOCROOT' -type f -print -exec chmod 0644 {} +"
+  run "find '$DOCROOT' -type d -print -exec chmod 0755 {} + || true"
+  run "find '$DOCROOT' -type f -print -exec chmod 0644 {} + || true"
 else
   echo "Warnung: Web-Root nicht gefunden: $DOCROOT"
 fi
@@ -81,10 +81,32 @@ for d in "${WRITABLE[@]}"; do
     else
       [ "$VERBOSE" -eq 1 ] && echo "Überspringe chown für $d (keine Root-Rechte)"
     fi
-    run "chmod -R 2775 '$d'"
-    run "find '$d' -type d -exec chmod g+s {} +"
+    run "chmod -R 2775 '$d' || true"
+    run "find '$d' -type d -exec chmod g+s {} + || true"
   else
     [ "$VERBOSE" -eq 1 ] && echo "Kein writable-Verzeichnis: $d"
+  fi
+done
+
+# 3b) settings.php für Installer schreibbar halten, settings.<env>.php stabil lesbar
+SETTINGS_FILE="$DOCROOT/sites/default/settings.php"
+SETTINGS_DEV_FILE="$DOCROOT/sites/default/settings.dev.php"
+SETTINGS_STAG_FILE="$DOCROOT/sites/default/settings.stag.php"
+SETTINGS_PROD_FILE="$DOCROOT/sites/default/settings.prod.php"
+
+if [ -f "$SETTINGS_FILE" ]; then
+  if [ "$CAN_CHOWN" -eq 1 ]; then
+    run "chown $WWWUSER:$WWWGROUP '$SETTINGS_FILE'"
+  fi
+  run "chmod 0666 '$SETTINGS_FILE' || true"
+fi
+
+for sf in "$SETTINGS_DEV_FILE" "$SETTINGS_STAG_FILE" "$SETTINGS_PROD_FILE"; do
+  if [ -f "$sf" ]; then
+    if [ "$CAN_CHOWN" -eq 1 ]; then
+      run "chown $WWWUSER:$WWWGROUP '$sf'"
+    fi
+    run "chmod 0644 '$sf' || true"
   fi
 done
 
@@ -103,13 +125,13 @@ fi
 # 4) Vendor-bin ausführbar machen (innerhalb der Drupal-Instanz)
 VENDOR_BIN="$DRUPAL_DIR/vendor/bin"
 if [ -d "$VENDOR_BIN" ]; then
-  run "find '$VENDOR_BIN' -type f -print -exec chmod 0755 {} +"
+  run "find '$VENDOR_BIN' -type f -print -exec chmod 0755 {} + || true"
 fi
 
 # 5) Falls in recipes Skripte liegen, nur dort ausführbar setzen
 RECIPES_DIR="$DRUPAL_DIR/recipes"
 if [ -d "$RECIPES_DIR" ]; then
-  run "find '$RECIPES_DIR' -type f -iname '*.sh' -print -exec chmod 0755 {} +"
+  run "find '$RECIPES_DIR' -type f -iname '*.sh' -print -exec chmod 0755 {} + || true"
 fi
 
 echo "Fertig. Zusammenfassung:"
