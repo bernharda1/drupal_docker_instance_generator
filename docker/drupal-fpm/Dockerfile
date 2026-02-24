@@ -14,8 +14,8 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp --with-a
     && docker-php-ext-install -j"$(nproc)" \
        bcmath bz2 exif gd intl mysqli opcache pdo_mysql pdo_pgsql zip
 
-RUN pecl install uploadprogress redis \
-    && docker-php-ext-enable uploadprogress redis opcache
+RUN pecl install apcu uploadprogress redis \
+    && docker-php-ext-enable apcu uploadprogress redis opcache
 
 RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
     && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
