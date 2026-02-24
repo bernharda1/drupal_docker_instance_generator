@@ -12,6 +12,125 @@ PUBLIC_DOMAIN_OVERRIDE="${PUBLIC_DOMAIN_OVERRIDE:-}"
 FORCE=0
 NO_INPUT=0
 DRY_RUN=0
+KEEP_EXISTING=0
+TARGET_EXISTS=0
+TARGET_HAS_CONTENT=0
+TARGET_POPULATION_MODE="fresh"
+
+prompt_conflict_action() {
+  local target_path="$1"
+  local kind="$2"
+  local choice
+
+  if [ "$FORCE" -eq 1 ]; then
+    printf 'overwrite'
+    return 0
+  fi
+
+  if [ "$NO_INPUT" -eq 1 ]; then
+    printf 'keep'
+    return 0
+  fi
+
+  while true; do
+    if [ "$kind" = "dir" ]; then
+      read -rp "Konflikt Ordner '$target_path' existiert bereits. [k] behalten/merge, [o] überschreiben, [a] abbrechen: " choice
+    else
+      read -rp "Konflikt Datei '$target_path' existiert bereits. [k] behalten, [o] überschreiben, [a] abbrechen: " choice
+    fi
+
+    choice="$(to_lower "$(trim "$choice")")"
+    case "$choice" in
+      ""|k|keep) printf 'keep'; return 0 ;;
+      o|overwrite) printf 'overwrite'; return 0 ;;
+      a|abort) printf 'abort'; return 0 ;;
+      *) echo "Ungültige Auswahl. Bitte k, o oder a eingeben." >&2 ;;
+    esac
+  done
+}
+
+populate_target_from_template() {
+  local src_root="$1"
+  local dst_root="$2"
+  local src
+  local rel
+  local dst
+  local action
+
+  while IFS= read -r -d '' src; do
+    rel="${src#"$src_root"/}"
+    dst="$dst_root/$rel"
+
+    if [ -d "$src" ]; then
+      if [ -e "$dst" ] && [ ! -d "$dst" ]; then
+        action="$(prompt_conflict_action "$dst" "dir")"
+        case "$action" in
+          overwrite)
+            run_cmd rm -rf "$dst"
+            run_cmd mkdir -p "$dst"
+            ;;
+          keep)
+            ;;
+          abort)
+            echo "Abbruch durch Nutzer." >&2
+            exit 1
+            ;;
+        esac
+      elif [ ! -d "$dst" ]; then
+        run_cmd mkdir -p "$dst"
+      fi
+      continue
+    fi
+
+    run_cmd mkdir -p "$(dirname "$dst")"
+
+    if [ -e "$dst" ]; then
+      action="$(prompt_conflict_action "$dst" "file")"
+      case "$action" in
+        overwrite)
+          run_cmd rm -rf "$dst"
+          run_cmd cp -a "$src" "$dst"
+          ;;
+        keep)
+          ;;
+        abort)
+          echo "Abbruch durch Nutzer." >&2
+          exit 1
+          ;;
+      esac
+    else
+      run_cmd cp -a "$src" "$dst"
+    fi
+  done < <(
+    find "$src_root" -mindepth 1 \
+      \( -path "$src_root/.git" -o -path "$src_root/.git/*" -o -path "$src_root/.github" -o -path "$src_root/.github/*" \) -prune -o \
+      -print0
+  )
+}
+
+copy_file_with_conflict_handling() {
+  local src="$1"
+  local dst="$2"
+  local action
+
+  if [ ! -e "$dst" ]; then
+    run_cmd cp "$src" "$dst"
+    return 0
+  fi
+
+  action="$(prompt_conflict_action "$dst" "file")"
+  case "$action" in
+    overwrite)
+      run_cmd cp "$src" "$dst"
+      ;;
+    keep)
+      ;;
+    abort)
+      echo "Abbruch durch Nutzer." >&2
+      exit 1
+      ;;
+  esac
+}
 
 usage() {
   cat <<'EOF'
@@ -28,6 +147,8 @@ Optionen:
   -d <domain>     PUBLIC_DOMAIN Override
   -y              Non-interactive, nutze Defaults oder error bei fehlenden Werten
   -f              Existierendes Zielverzeichnis überschreiben
+  -k, --keep-existing
+                  Bei bestehendem Zielordner: Inhalte behalten/mergen (ohne Löschen)
   -r, --dry-run   Keine Änderungen durchführen, nur ausgeben (Simulation)
   -h              Hilfe anzeigen
 
@@ -260,7 +381,7 @@ apply_domain_to_server_configs() {
   fi
 }
 
-while getopts ":n:p:e:c:d:fyhr-:" opt; do
+while getopts ":n:p:e:c:d:fkyhr-:" opt; do
   case "$opt" in
     n) PROJECT_NAME="$(trim "$OPTARG")" ;;
     p) TARGET_BASE_PATH="$(trim "$OPTARG")" ;;
@@ -268,11 +389,13 @@ while getopts ":n:p:e:c:d:fyhr-:" opt; do
     c) COMPOSER_PROJECT_NAME="$(trim "$OPTARG")" ;;
     d) PUBLIC_DOMAIN_OVERRIDE="$(trim "$OPTARG")" ;;
     f) FORCE=1 ;;
+    k) KEEP_EXISTING=1 ;;
     y) NO_INPUT=1 ;;
     r) DRY_RUN=1 ;;
     -)
       case "${OPTARG}" in
         dry-run) DRY_RUN=1 ;;
+        keep-existing|merge-default) KEEP_EXISTING=1 ;;
         help) usage; exit 0 ;;
         *) echo "Unbekannte Option: --${OPTARG}" >&2; usage; exit 1 ;;
       esac
@@ -473,6 +596,13 @@ fi
 
 TARGET_DIR="${TARGET_BASE_PATH%/}/$PROJECT_NAME"
 
+if [ -d "$TARGET_DIR" ]; then
+  TARGET_EXISTS=1
+  if [ "$(find "$TARGET_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
+    TARGET_HAS_CONTENT=1
+  fi
+fi
+
 case "$TARGET_DIR" in
   "$TEMPLATE_ROOT"|"$TEMPLATE_ROOT"/*)
     echo "Zielpfad darf nicht innerhalb des Template-Ordners liegen: $TARGET_DIR" >&2
@@ -480,36 +610,55 @@ case "$TARGET_DIR" in
     ;;
 esac
 
-if [ -d "$TARGET_DIR" ] && [ "$(find "$TARGET_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
-  if [ "$FORCE" -ne 1 ]; then
-    if [ "$NO_INPUT" -eq 1 ]; then
-      echo "Zielordner $TARGET_DIR ist nicht leer. Use -f to overwrite in non-interactive mode." >&2
-      exit 1
-    fi
-    read -rp "Zielordner $TARGET_DIR ist nicht leer. Überschreiben? [y/N]: " confirm
-    confirm="$(to_lower "$(trim "$confirm")")"
-    if [ "$confirm" != "y" ] && [ "$confirm" != "yes" ]; then
-      echo "Abbruch." >&2
-      exit 1
-    fi
+if [ "$FORCE" -eq 1 ] && [ "$KEEP_EXISTING" -eq 1 ]; then
+  echo "Optionen -f und -k/--keep-existing können nicht kombiniert werden." >&2
+  exit 1
+fi
+
+if [ "$TARGET_HAS_CONTENT" -eq 1 ]; then
+  if [ "$FORCE" -eq 1 ]; then
+    TARGET_POPULATION_MODE="replace"
+  elif [ "$KEEP_EXISTING" -eq 1 ]; then
+    TARGET_POPULATION_MODE="merge"
+  elif [ "$NO_INPUT" -eq 1 ]; then
+    echo "Zielordner $TARGET_DIR ist nicht leer. Nutze -f zum Überschreiben oder -k/--keep-existing zum Beibehalten im non-interactive Modus." >&2
+    exit 1
+  else
+    while true; do
+      read -rp "Zielordner $TARGET_DIR ist nicht leer. [m]ergen (bestehend behalten), [o]verschreiben (alles löschen), [a]bbrechen: " target_mode_choice
+      target_mode_choice="$(to_lower "$(trim "$target_mode_choice")")"
+      case "$target_mode_choice" in
+        ""|m|merge)
+          TARGET_POPULATION_MODE="merge"
+          break
+          ;;
+        o|overwrite)
+          TARGET_POPULATION_MODE="replace"
+          break
+          ;;
+        a|abort)
+          echo "Abbruch." >&2
+          exit 1
+          ;;
+        *)
+          echo "Ungültige Auswahl. Bitte m, o oder a eingeben." >&2
+          ;;
+      esac
+    done
   fi
+fi
+
+if [ "$TARGET_POPULATION_MODE" = "replace" ]; then
   run_cmd rm -rf "$TARGET_DIR"
 fi
 
 run_cmd mkdir -p "$TARGET_DIR"
-
-# Copy template into target. Prefer rsync to exclude VCS dirs; fallback to cp+rm.
-if command -v rsync >/dev/null 2>&1; then
-  run_cmd rsync -a --exclude='.git' --exclude='.github' "$TEMPLATE_ROOT/." "$TARGET_DIR/"
-else
-  run_cmd cp -a "$TEMPLATE_ROOT/." "$TARGET_DIR/"
-  run_cmd rm -rf "$TARGET_DIR/.git" "$TARGET_DIR/.github"
-fi
+populate_target_from_template "$TEMPLATE_ROOT" "$TARGET_DIR"
 
 # Use environment-specific env file as primary source of truth, since the helper scripts
 # expect .env.dev/.env.stag/.env.prod. Also keep .env in sync for convenience.
 TARGET_ENV_FILE="$TARGET_DIR/.env.$STACK_ENV"
-run_cmd cp "$ENV_SOURCE_FILE" "$TARGET_ENV_FILE"
+copy_file_with_conflict_handling "$ENV_SOURCE_FILE" "$TARGET_ENV_FILE"
 
 # Keep .env pointing to the selected environment file.
 if [ "$DRY_RUN" -eq 1 ]; then

@@ -40,6 +40,21 @@ scripts/create-instance.sh -n shop360 -p /srv/stag -e stag -c infrasightsolution
 
 # PUBLIC_DOMAIN direkt setzen
 scripts/create-instance.sh -n shop360 -p /srv/prod -e prod -d www.shop360.example.com
+
+# Bestehenden Projektordner behalten/mergen (sicher für vorhandenes Git-Repo)
+scripts/create-instance.sh -n shop360 -p /home/dev/projects -e dev -k
+
+# Non-interactive + bestehende Inhalte behalten
+scripts/create-instance.sh -n shop360 -p /home/dev/projects -e dev -y -k
+```
+
+GitHub-Workflow (bestehendes Projekt nicht löschen):
+
+```bash
+cd /home/dev/projects
+git clone git@github.com:your-org/shop360.git
+cd /home/dev/projects/drupal_docker_instance_generator
+scripts/create-instance.sh -n shop360 -p /home/dev/projects -e dev -y -k
 ```
 
 Hinweis: Der Composer-Name wird aus `COMPOSER_PROJECT_NAME` der jeweiligen `.env.<env>` gelesen und in `drupal/composer.json` als `name` eingetragen.
@@ -61,7 +76,7 @@ Wenn `COMPOSE_PROFILES` das Profil `reverse-proxy` enthält, setzt der Generator
 - `STACK_ENV` korrekt (`dev`, `stag`, `prod`)
 - `PUBLIC_DOMAIN` als Hostname ohne `http(s)://` und ohne Pfad
 - `REVERSE_PROXY_HOST_PORT` als numerischer Port (`1..65535`)
-- Zielpfad beschreibbar und Zielordner entweder leer oder Aufruf mit `-f`
+- Zielpfad beschreibbar und Zielordner entweder leer oder Aufruf mit `-f` (alles löschen) bzw. `-k` (bestehendes behalten/mergen)
 - Optional vorab prüfen mit `scripts/validate-env.sh .env.<env>`
 
 ## Drush/Composer ohne `docker exec`
@@ -97,7 +112,7 @@ docker compose --env-file .env.prod up -d --build
 ### Troubleshooting (Instanz-Generator)
 
 - `Ungültige Umgebung`: nur `dev`, `stag`, `prod` sind erlaubt.
-- Zielordner nicht leer: mit `-f` überschreiben oder anderen Projektnamen/Pfad wählen.
+- Zielordner nicht leer: mit `-f` komplett überschreiben/löschen oder mit `-k` Inhalte behalten/mergen.
 - Rechtefehler bei `/srv/stag` oder `/srv/prod`: Skript mit einem erlaubten Benutzer ausführen oder Pfad per `-p` auf einen beschreibbaren Ort setzen.
 - Falscher Standard-Zielpfad: `PROJECT_BASE_PATH` in `.env.dev`, `.env.stag`, `.env.prod` anpassen.
 - Falscher Composer-Name: `COMPOSER_PROJECT_NAME` in `.env.<env>` setzen oder beim Aufruf mit `-c` überschreiben.
