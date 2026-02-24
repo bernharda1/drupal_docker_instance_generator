@@ -550,6 +550,15 @@ if [ -z "$TARGET_PUBLIC_DOMAIN" ]; then
 fi
 if [ -n "$TARGET_PUBLIC_DOMAIN" ]; then
   apply_domain_to_server_configs "$TARGET_DIR" "$TARGET_PUBLIC_DOMAIN"
+  TARGET_PHPMYADMIN_DOMAIN="phpmyadmin.${TARGET_PUBLIC_DOMAIN}"
+  TARGET_MAILPIT_DOMAIN="mailpit.${TARGET_PUBLIC_DOMAIN}"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "+ would set PHPMYADMIN_DOMAIN=$TARGET_PHPMYADMIN_DOMAIN in $TARGET_ENV_FILE"
+    echo "+ would set MAILPIT_DOMAIN=$TARGET_MAILPIT_DOMAIN in $TARGET_ENV_FILE"
+  else
+    set_or_add_env_value "$TARGET_ENV_FILE" "PHPMYADMIN_DOMAIN" "$TARGET_PHPMYADMIN_DOMAIN"
+    set_or_add_env_value "$TARGET_ENV_FILE" "MAILPIT_DOMAIN" "$TARGET_MAILPIT_DOMAIN"
+  fi
 fi
 
 TARGET_COMPOSE_PROFILES="$(trim "$(read_env_value "$TARGET_ENV_FILE" "COMPOSE_PROFILES" || true)")"

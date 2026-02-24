@@ -6,9 +6,10 @@ services:
       dockerfile: docker/drupal-fpm/Dockerfile
       args:
         DRUPAL_BASE_IMAGE: ${DRUPAL_BASE_IMAGE:-php:8.4.18-fpm-bookworm}
-    container_name: infrasight_drupal_fpm
+    container_name: ${CONTAINER_PREFIX:-infrasight}_drupal_fpm
     hostname: ${FPM_HOSTNAME:-drupal-fpm}
     restart: unless-stopped
+    profiles: ["fpm"]
     working_dir: /var/www/html
     environment:
       TZ: ${TZ:-Europe/Vienna}
@@ -45,7 +46,7 @@ services:
 
   web-nginx:
     image: nginx:1.27-alpine
-    container_name: infrasight_web_nginx
+    container_name: ${CONTAINER_PREFIX:-infrasight}_web_nginx
     hostname: ${WEB_HOSTNAME:-web-nginx}
     restart: unless-stopped
     profiles: ["web-nginx"]
@@ -64,24 +65,24 @@ services:
     labels:
       - "traefik.enable=${TRAEFIK_ENABLE:-true}"
       - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
-      - "traefik.http.routers.infrasight-nginx-http.rule=Host(`${PUBLIC_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-nginx-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
-      - "traefik.http.routers.infrasight-nginx-http.middlewares=infrasight-nginx-https-redirect"
-      - "traefik.http.middlewares.infrasight-nginx-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.infrasight-nginx-https-redirect.redirectscheme.permanent=true"
-      - "traefik.http.routers.infrasight-nginx-https.rule=Host(`${PUBLIC_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-nginx-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
-      - "traefik.http.routers.infrasight-nginx-https.tls=true"
-      - "traefik.http.routers.infrasight-nginx-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
-      - "traefik.http.routers.infrasight-nginx-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
-      - "traefik.http.routers.infrasight-nginx-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
-      - "traefik.http.services.infrasight-nginx.loadbalancer.server.port=8080"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-http.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-http.middlewares=${TRAEFIK_PREFIX:-infrasight}-nginx-https-redirect"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-nginx-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-nginx-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-https.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-https.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-nginx-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-infrasight}-nginx.loadbalancer.server.port=8080"
     mem_limit: ${WEB_NGINX_MEM_LIMIT:-384m}
     cpus: ${WEB_NGINX_CPUS:-0.50}
 
   web-apache:
     image: httpd:2.4
-    container_name: infrasight_web_apache
+    container_name: ${CONTAINER_PREFIX:-infrasight}_web_apache
     hostname: ${WEB_HOSTNAME:-web-apache}
     restart: unless-stopped
     profiles: ["web-apache"]
@@ -100,24 +101,24 @@ services:
     labels:
       - "traefik.enable=${TRAEFIK_ENABLE:-true}"
       - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
-      - "traefik.http.routers.infrasight-apache-http.rule=Host(`${PUBLIC_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-apache-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
-      - "traefik.http.routers.infrasight-apache-http.middlewares=infrasight-apache-https-redirect"
-      - "traefik.http.middlewares.infrasight-apache-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.infrasight-apache-https-redirect.redirectscheme.permanent=true"
-      - "traefik.http.routers.infrasight-apache-https.rule=Host(`${PUBLIC_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-apache-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
-      - "traefik.http.routers.infrasight-apache-https.tls=true"
-      - "traefik.http.routers.infrasight-apache-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
-      - "traefik.http.routers.infrasight-apache-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
-      - "traefik.http.routers.infrasight-apache-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
-      - "traefik.http.services.infrasight-apache.loadbalancer.server.port=8080"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-http.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-http.middlewares=${TRAEFIK_PREFIX:-infrasight}-apache-https-redirect"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-apache-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-apache-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-https.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-https.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-apache-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-infrasight}-apache.loadbalancer.server.port=8080"
     mem_limit: ${WEB_APACHE_MEM_LIMIT:-384m}
     cpus: ${WEB_APACHE_CPUS:-0.50}
 
   web-openlitespeed:
     image: ${OPENLITESPEED_IMAGE:-litespeedtech/openlitespeed:latest}
-    container_name: infrasight_web_openlitespeed
+    container_name: ${CONTAINER_PREFIX:-infrasight}_web_openlitespeed
     hostname: ${WEB_HOSTNAME:-web-openlitespeed}
     restart: unless-stopped
     profiles: ["web-ols"]
@@ -139,24 +140,24 @@ services:
     labels:
       - "traefik.enable=${TRAEFIK_ENABLE:-true}"
       - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
-      - "traefik.http.routers.infrasight-ols-http.rule=Host(`${PUBLIC_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-ols-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
-      - "traefik.http.routers.infrasight-ols-http.middlewares=infrasight-ols-https-redirect"
-      - "traefik.http.middlewares.infrasight-ols-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.infrasight-ols-https-redirect.redirectscheme.permanent=true"
-      - "traefik.http.routers.infrasight-ols-https.rule=Host(`${PUBLIC_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-ols-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
-      - "traefik.http.routers.infrasight-ols-https.tls=true"
-      - "traefik.http.routers.infrasight-ols-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
-      - "traefik.http.routers.infrasight-ols-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
-      - "traefik.http.routers.infrasight-ols-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
-      - "traefik.http.services.infrasight-ols.loadbalancer.server.port=8080"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-http.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-http.middlewares=${TRAEFIK_PREFIX:-infrasight}-ols-https-redirect"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-ols-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-ols-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-https.rule=Host(`${PUBLIC_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-https.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-https.tls.options=${TRAEFIK_TLS_OPTIONS:-default}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-ols-https.middlewares=${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-infrasight}-ols.loadbalancer.server.port=8080"
     mem_limit: ${WEB_OLS_MEM_LIMIT:-512m}
     cpus: ${WEB_OLS_CPUS:-0.75}
 
   reverse-proxy:
     image: nginx:1.27-alpine
-    container_name: infrasight_reverse_proxy
+    container_name: ${CONTAINER_PREFIX:-infrasight}_reverse_proxy
     hostname: ${REVERSE_PROXY_HOSTNAME:-reverse-proxy}
     restart: unless-stopped
     profiles: ["reverse-proxy"]
@@ -183,7 +184,7 @@ services:
 
   db-mysql:
     image: mysql:8.4
-    container_name: infrasight_db_mysql
+    container_name: ${CONTAINER_PREFIX:-infrasight}_db_mysql
     hostname: ${MYSQL_HOSTNAME:-db-mysql}
     restart: unless-stopped
     profiles: ["db-mysql"]
@@ -204,7 +205,7 @@ services:
 
   db-mariadb:
     image: mariadb:11
-    container_name: infrasight_db_mariadb
+    container_name: ${CONTAINER_PREFIX:-infrasight}_db_mariadb
     hostname: ${MARIADB_HOSTNAME:-db-mariadb}
     restart: unless-stopped
     profiles: ["db-mariadb"]
@@ -225,7 +226,7 @@ services:
 
   db-postgres:
     image: postgres:17-alpine
-    container_name: infrasight_db_postgres
+    container_name: ${CONTAINER_PREFIX:-infrasight}_db_postgres
     hostname: ${POSTGRES_HOSTNAME:-db-postgres}
     restart: unless-stopped
     profiles: ["db-postgres"]
@@ -242,7 +243,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: infrasight_cache_redis
+    container_name: ${CONTAINER_PREFIX:-infrasight}_cache_redis
     hostname: ${REDIS_HOSTNAME:-redis}
     restart: unless-stopped
     profiles: ["cache-redis"]
@@ -256,7 +257,7 @@ services:
 
   varnish:
     image: varnish:7.5
-    container_name: infrasight_cache_varnish
+    container_name: ${CONTAINER_PREFIX:-infrasight}_cache_varnish
     hostname: ${VARNISH_HOSTNAME:-varnish}
     restart: unless-stopped
     profiles: ["cache-varnish"]
@@ -282,7 +283,7 @@ services:
 
   phpmyadmin:
     image: phpmyadmin:5-apache
-    container_name: infrasight_phpmyadmin
+    container_name: ${CONTAINER_PREFIX:-infrasight}_phpmyadmin
     hostname: ${PHPMYADMIN_HOSTNAME:-phpmyadmin}
     restart: unless-stopped
     profiles: ["phpmyadmin"]
@@ -299,26 +300,23 @@ services:
     labels:
       - "traefik.enable=${TRAEFIK_ENABLE:-true}"
       - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
-      - "traefik.http.routers.infrasight-phpmyadmin-http.rule=Host(`${PHPMYADMIN_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-phpmyadmin-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
-      - "traefik.http.routers.infrasight-phpmyadmin-http.middlewares=infrasight-phpmyadmin-https-redirect"
-      - "traefik.http.middlewares.infrasight-phpmyadmin-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.infrasight-phpmyadmin-https-redirect.redirectscheme.permanent=true"
-      - "traefik.http.routers.infrasight-phpmyadmin-https.rule=Host(`${PHPMYADMIN_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-phpmyadmin-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
-      - "traefik.http.routers.infrasight-phpmyadmin-https.tls=true"
-      - "traefik.http.routers.infrasight-phpmyadmin-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
-      - "traefik.http.routers.infrasight-phpmyadmin-https.middlewares=${TRAEFIK_UI_SECURITY_MIDDLEWARES:-${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}}"
-      - "traefik.http.services.infrasight-phpmyadmin.loadbalancer.server.port=80"
-    ports:
-      - "${PUBLIC_BIND_ADDRESS}:${PHPMYADMIN_HOST_PORT}:80"
-      - "${PUBLIC_BIND_ADDRESS_V4}:${PHPMYADMIN_HOST_PORT}:80"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-http.rule=Host(`${PHPMYADMIN_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-http.middlewares=${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https-redirect"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.rule=Host(`${PHPMYADMIN_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.middlewares=${TRAEFIK_UI_SECURITY_MIDDLEWARES:-${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}}"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin.loadbalancer.server.port=80"
     mem_limit: ${PHPMYADMIN_MEM_LIMIT:-256m}
     cpus: ${PHPMYADMIN_CPUS:-0.30}
 
   mailpit:
     image: axllent/mailpit:latest
-    container_name: infrasight_mailpit
+    container_name: ${CONTAINER_PREFIX:-infrasight}_mailpit
     hostname: ${MAILPIT_HOSTNAME:-mailpit}
     restart: unless-stopped
     profiles: ["mailpit"]
@@ -333,28 +331,23 @@ services:
     labels:
       - "traefik.enable=${TRAEFIK_ENABLE:-true}"
       - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
-      - "traefik.http.routers.infrasight-mailpit-http.rule=Host(`${MAILPIT_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-mailpit-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
-      - "traefik.http.routers.infrasight-mailpit-http.middlewares=infrasight-mailpit-https-redirect"
-      - "traefik.http.middlewares.infrasight-mailpit-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.infrasight-mailpit-https-redirect.redirectscheme.permanent=true"
-      - "traefik.http.routers.infrasight-mailpit-https.rule=Host(`${MAILPIT_DOMAIN}`)"
-      - "traefik.http.routers.infrasight-mailpit-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
-      - "traefik.http.routers.infrasight-mailpit-https.tls=true"
-      - "traefik.http.routers.infrasight-mailpit-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
-      - "traefik.http.routers.infrasight-mailpit-https.middlewares=${TRAEFIK_UI_SECURITY_MIDDLEWARES:-${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}}"
-      - "traefik.http.services.infrasight-mailpit.loadbalancer.server.port=8025"
-    ports:
-      - "${PUBLIC_BIND_ADDRESS}:${MAILPIT_SMTP_HOST_PORT}:1025"
-      - "${PUBLIC_BIND_ADDRESS_V4}:${MAILPIT_SMTP_HOST_PORT}:1025"
-      - "${PUBLIC_BIND_ADDRESS}:${MAILPIT_UI_HOST_PORT}:8025"
-      - "${PUBLIC_BIND_ADDRESS_V4}:${MAILPIT_UI_HOST_PORT}:8025"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-http.rule=Host(`${MAILPIT_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-http.entrypoints=${TRAEFIK_ENTRYPOINT_WEB:-web}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-http.middlewares=${TRAEFIK_PREFIX:-infrasight}-mailpit-https-redirect"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-mailpit-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.${TRAEFIK_PREFIX:-infrasight}-mailpit-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-https.rule=Host(`${MAILPIT_DOMAIN}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-https.entrypoints=${TRAEFIK_ENTRYPOINT_WEBSECURE:-websecure}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-https.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-mailpit-https.middlewares=${TRAEFIK_UI_SECURITY_MIDDLEWARES:-${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}}"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-infrasight}-mailpit.loadbalancer.server.port=8025"
     mem_limit: ${MAILPIT_MEM_LIMIT:-256m}
     cpus: ${MAILPIT_CPUS:-0.30}
 
   composer:
     image: ${DRUPAL_IMAGE_NAME:-infrasight/drupal11-fpm}:${DRUPAL_IMAGE_TAG:-local}
-    container_name: infrasight_composer
+    container_name: ${CONTAINER_PREFIX:-infrasight}_composer
     hostname: ${COMPOSER_HOSTNAME:-composer}
     profiles: ["tools"]
     working_dir: /var/www/html
@@ -382,7 +375,7 @@ services:
 
   drush:
     image: ${DRUPAL_IMAGE_NAME:-infrasight/drupal11-fpm}:${DRUPAL_IMAGE_TAG:-local}
-    container_name: infrasight_drush
+    container_name: ${CONTAINER_PREFIX:-infrasight}_drush
     hostname: ${DRUSH_HOSTNAME:-drush}
     profiles: ["tools"]
     working_dir: /var/www/html
@@ -405,7 +398,7 @@ services:
 
   node:
     image: node:22-alpine
-    container_name: infrasight_node
+    container_name: ${CONTAINER_PREFIX:-infrasight}_node
     hostname: ${NODE_HOSTNAME:-node}
     profiles: ["tools"]
     working_dir: /workspace

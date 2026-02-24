@@ -199,6 +199,21 @@ scripts/status-stag.sh
 scripts/status-prod.sh
 ```
 
+## COMPOSE-Profiles
+
+Beachte: Services werden nur gestartet, wenn ihr Profil in `COMPOSE_PROFILES` der verwendeten `.env` enthalten ist. Beispiele:
+
+- `fpm` — PHP-FPM-Services (z. B. `drupal-fpm`, `bedrock-fpm`).
+- `phpmyadmin`, `mailpit` — UI-Tools; starten nur, wenn diese Profile in `COMPOSE_PROFILES` stehen.
+
+Starten (Beispiel):
+
+```bash
+docker compose --env-file .env.dev up -d --build
+```
+
+Ändern: Passe `COMPOSE_PROFILES` in `.env.dev`, `.env.stag` oder `.env.prod` an, oder verwende bei Bedarf `--profile` beim `docker compose`-Aufruf.
+
 Status für einzelnen Service:
 
 ```bash
