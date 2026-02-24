@@ -46,6 +46,9 @@ scripts/create-instance.sh -n shop360 -p /home/dev/projects -e dev -k
 
 # Non-interactive + bestehende Inhalte behalten
 scripts/create-instance.sh -n shop360 -p /home/dev/projects -e dev -y -k
+
+# Nur Vollständigkeit prüfen (ohne Änderungen), Exit 0/5/6
+scripts/create-instance.sh -n shop360 -p /home/dev/projects -e dev --verify-only
 ```
 
 GitHub-Workflow (bestehendes Projekt nicht löschen):
@@ -113,6 +116,7 @@ docker compose --env-file .env.prod up -d --build
 
 - `Ungültige Umgebung`: nur `dev`, `stag`, `prod` sind erlaubt.
 - Zielordner nicht leer: mit `-f` komplett überschreiben/löschen oder mit `-k` Inhalte behalten/mergen.
+- Vollständigkeit prüfen: mit `--verify-only` (0 = vollständig, 5 = fehlende Pfade, 6 = Zielordner fehlt).
 - Rechtefehler bei `/srv/stag` oder `/srv/prod`: Skript mit einem erlaubten Benutzer ausführen oder Pfad per `-p` auf einen beschreibbaren Ort setzen.
 - Falscher Standard-Zielpfad: `PROJECT_BASE_PATH` in `.env.dev`, `.env.stag`, `.env.prod` anpassen.
 - Falscher Composer-Name: `COMPOSER_PROJECT_NAME` in `.env.<env>` setzen oder beim Aufruf mit `-c` überschreiben.

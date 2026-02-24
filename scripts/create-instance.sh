@@ -12,6 +12,7 @@ PUBLIC_DOMAIN_OVERRIDE="${PUBLIC_DOMAIN_OVERRIDE:-}"
 FORCE=0
 NO_INPUT=0
 DRY_RUN=0
+VERIFY_ONLY=0
 KEEP_EXISTING=0
 TARGET_EXISTS=0
 TARGET_HAS_CONTENT=0
@@ -108,6 +109,40 @@ populate_target_from_template() {
   )
 }
 
+sync_missing_from_template() {
+  local src_root="$1"
+  local dst_root="$2"
+  local src
+  local rel
+  local dst
+
+  if command -v rsync >/dev/null 2>&1; then
+    run_cmd rsync -a --ignore-existing --exclude='.git' --exclude='.github' "$src_root/." "$dst_root/"
+    return 0
+  fi
+
+  while IFS= read -r -d '' src; do
+    rel="${src#"$src_root"/}"
+    dst="$dst_root/$rel"
+
+    if [ -d "$src" ]; then
+      if [ ! -e "$dst" ]; then
+        run_cmd mkdir -p "$dst"
+      fi
+      continue
+    fi
+
+    if [ ! -e "$dst" ]; then
+      run_cmd mkdir -p "$(dirname "$dst")"
+      run_cmd cp -a "$src" "$dst"
+    fi
+  done < <(
+    find "$src_root" -mindepth 1 \
+      \( -path "$src_root/.git" -o -path "$src_root/.git/*" -o -path "$src_root/.github" -o -path "$src_root/.github/*" \) -prune -o \
+      -print0
+  )
+}
+
 copy_file_with_conflict_handling() {
   local src="$1"
   local dst="$2"
@@ -149,6 +184,7 @@ Optionen:
   -f              Existierendes Zielverzeichnis überschreiben
   -k, --keep-existing
                   Bei bestehendem Zielordner: Inhalte behalten/mergen (ohne Löschen)
+  --verify-only    Prüft nur Vollständigkeit (Template -> Ziel), ohne Änderungen
   -r, --dry-run   Keine Änderungen durchführen, nur ausgeben (Simulation)
   -h              Hilfe anzeigen
 
@@ -165,6 +201,30 @@ print_cmd() {
     printf '%q ' "$arg"
   done
   printf '\n'
+}
+
+verify_target_completeness() {
+  local src_root="$1"
+  local dst_root="$2"
+  local rel
+
+  while IFS= read -r -d '' src; do
+    rel="${src#"$src_root"/}"
+    case "$rel" in
+      .git|.git/*|.github|.github/*) continue ;;
+    esac
+
+    if [ -d "$src" ]; then
+      if [ ! -d "$dst_root/$rel" ]; then
+        echo "$rel/"
+      fi
+      continue
+    fi
+
+    if [ ! -f "$dst_root/$rel" ]; then
+      echo "$rel"
+    fi
+  done < <(find "$src_root" -mindepth 1 -print0)
 }
 
 run_cmd() {
@@ -396,6 +456,7 @@ while getopts ":n:p:e:c:d:fkyhr-:" opt; do
       case "${OPTARG}" in
         dry-run) DRY_RUN=1 ;;
         keep-existing|merge-default) KEEP_EXISTING=1 ;;
+        verify-only) VERIFY_ONLY=1 ;;
         help) usage; exit 0 ;;
         *) echo "Unbekannte Option: --${OPTARG}" >&2; usage; exit 1 ;;
       esac
@@ -405,6 +466,10 @@ while getopts ":n:p:e:c:d:fkyhr-:" opt; do
     \?) echo "Unbekannte Option: -$OPTARG" >&2; usage; exit 1 ;;
   esac
 done
+
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+  NO_INPUT=1
+fi
 
 if [ -z "$STACK_ENV" ]; then
   STACK_ENV="$(to_lower "$(trim "$(read_env_value "$TEMPLATE_ROOT/.env" "STACK_ENV" || true)")")"
@@ -615,6 +680,27 @@ if [ "$FORCE" -eq 1 ] && [ "$KEEP_EXISTING" -eq 1 ]; then
   exit 1
 fi
 
+if [ "$VERIFY_ONLY" -eq 1 ] && [ "$FORCE" -eq 1 -o "$KEEP_EXISTING" -eq 1 -o "$DRY_RUN" -eq 1 ]; then
+  echo "--verify-only darf nicht mit -f, -k/--keep-existing oder --dry-run kombiniert werden." >&2
+  exit 1
+fi
+
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+  if [ ! -d "$TARGET_DIR" ]; then
+    echo "Zielordner existiert nicht: $TARGET_DIR" >&2
+    exit 6
+  fi
+
+  missing_output="$(verify_target_completeness "$TEMPLATE_ROOT" "$TARGET_DIR" || true)"
+  if [ -z "$missing_output" ]; then
+    echo "VERIFY_OK: Zielordner vollständig (Template-Abgleich ohne .git/.github)."
+    exit 0
+  fi
+
+  echo "VERIFY_FAIL: Fehlende Pfade in $TARGET_DIR"
+  printf '%s\n' "$missing_output"
+  exit 5
+fi
 if [ "$TARGET_HAS_CONTENT" -eq 1 ]; then
   if [ "$FORCE" -eq 1 ]; then
     TARGET_POPULATION_MODE="replace"
@@ -654,6 +740,7 @@ fi
 
 run_cmd mkdir -p "$TARGET_DIR"
 populate_target_from_template "$TEMPLATE_ROOT" "$TARGET_DIR"
+sync_missing_from_template "$TEMPLATE_ROOT" "$TARGET_DIR"
 
 # Use environment-specific env file as primary source of truth, since the helper scripts
 # expect .env.dev/.env.stag/.env.prod. Also keep .env in sync for convenience.
