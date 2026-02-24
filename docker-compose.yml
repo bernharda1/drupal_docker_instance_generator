@@ -428,6 +428,9 @@ services:
       DRUPAL_HASH_SALT: ${DRUPAL_HASH_SALT:-local-change-me}
     volumes:
       - ./drupal:/var/www/html
+      - drupal_public_files:/var/www/html/web/sites/default/files
+      - drupal_private_files:/var/www/html/web/sites/default/private
+      - drupal_tmp:/tmp/drupal
       - ./config/php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
     networks:
       - app_net

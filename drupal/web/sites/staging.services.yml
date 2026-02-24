@@ -1,0 +1,8 @@
+parameters:
+  # Wichtig: renderer.config hier NICHT partiell überschreiben (Drupal merged shallow).
+  # Sonst können Pflichtwerte wie required_cache_contexts verloren gehen.
+  http.response.debug_cacheability_headers: false
+  twig.config:
+    debug: false
+    auto_reload: true
+    cache: true

@@ -53,4 +53,6 @@ if ! [ -t 0 ] || ! [ -t 1 ]; then
   TTY_OPT=(-T)
 fi
 
-exec docker compose --env-file "$ENV_PATH" exec "${TTY_OPT[@]}" drush vendor/bin/drush "$@"
+DRUSH_DOCKER_USER="${DRUSH_DOCKER_USER:-33:33}"
+
+exec docker compose --env-file "$ENV_PATH" exec "${TTY_OPT[@]}" -u "$DRUSH_DOCKER_USER" drush vendor/bin/drush "$@"

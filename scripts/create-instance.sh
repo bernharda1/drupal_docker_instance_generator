@@ -398,6 +398,33 @@ resolve_upstream_host_from_profiles() {
   printf 'web-nginx'
 }
 
+resolve_web_server_from_profiles() {
+  local profiles="$1"
+
+  if profiles_include "$profiles" "web-ols"; then
+    printf 'openlitespeed'
+    return 0
+  fi
+
+  if profiles_include "$profiles" "web-apache"; then
+    printf 'apache'
+    return 0
+  fi
+
+  printf 'nginx'
+}
+
+resolve_cache_backend_from_profiles() {
+  local profiles="$1"
+
+  if profiles_include "$profiles" "cache-redis"; then
+    printf 'redis'
+    return 0
+  fi
+
+  printf 'database'
+}
+
 apply_domain_to_server_configs() {
   local target_dir="$1"
   local domain="$2"
@@ -801,6 +828,55 @@ TARGET_COMPOSE_PROFILES="$(trim "$(read_env_value "$TARGET_ENV_FILE" "COMPOSE_PR
 if [ -z "$TARGET_COMPOSE_PROFILES" ]; then
   TARGET_COMPOSE_PROFILES="$(trim "$(read_env_value "$ENV_SOURCE_FILE" "COMPOSE_PROFILES" || true)")"
 fi
+
+TARGET_WEB_SERVER="$(resolve_web_server_from_profiles "$TARGET_COMPOSE_PROFILES")"
+TARGET_CACHE_BACKEND="$(resolve_cache_backend_from_profiles "$TARGET_COMPOSE_PROFILES")"
+TARGET_REDIS_ENABLED="0"
+TARGET_VARNISH_ENABLED="0"
+TARGET_REVERSE_PROXY_ENABLED="0"
+
+if profiles_include "$TARGET_COMPOSE_PROFILES" "cache-redis"; then
+  TARGET_REDIS_ENABLED="1"
+fi
+
+if profiles_include "$TARGET_COMPOSE_PROFILES" "cache-varnish"; then
+  TARGET_VARNISH_ENABLED="1"
+  TARGET_REVERSE_PROXY_ENABLED="1"
+fi
+
+if profiles_include "$TARGET_COMPOSE_PROFILES" "reverse-proxy"; then
+  TARGET_REVERSE_PROXY_ENABLED="1"
+fi
+
+case "$STACK_ENV" in
+  dev) TARGET_ENV_SERVICES_FILE="sites/development.services.yml" ;;
+  stag) TARGET_ENV_SERVICES_FILE="sites/staging.services.yml" ;;
+  prod) TARGET_ENV_SERVICES_FILE="sites/production.services.yml" ;;
+  *) TARGET_ENV_SERVICES_FILE="" ;;
+esac
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "+ would set DRUPAL_WEB_SERVER=$TARGET_WEB_SERVER in $TARGET_ENV_FILE"
+  echo "+ would set DRUPAL_CACHE_BACKEND=$TARGET_CACHE_BACKEND in $TARGET_ENV_FILE"
+  echo "+ would set DRUPAL_REDIS_ENABLED=$TARGET_REDIS_ENABLED in $TARGET_ENV_FILE"
+  echo "+ would set DRUPAL_VARNISH_ENABLED=$TARGET_VARNISH_ENABLED in $TARGET_ENV_FILE"
+  echo "+ would set DRUPAL_REVERSE_PROXY_ENABLED=$TARGET_REVERSE_PROXY_ENABLED in $TARGET_ENV_FILE"
+  echo "+ would set DRUPAL_REVERSE_PROXY_ADDRESSES=127.0.0.1 in $TARGET_ENV_FILE"
+  if [ -n "$TARGET_ENV_SERVICES_FILE" ]; then
+    echo "+ would set DRUPAL_ENV_SERVICES_FILE=$TARGET_ENV_SERVICES_FILE in $TARGET_ENV_FILE"
+  fi
+else
+  set_or_add_env_value "$TARGET_ENV_FILE" "DRUPAL_WEB_SERVER" "$TARGET_WEB_SERVER"
+  set_or_add_env_value "$TARGET_ENV_FILE" "DRUPAL_CACHE_BACKEND" "$TARGET_CACHE_BACKEND"
+  set_or_add_env_value "$TARGET_ENV_FILE" "DRUPAL_REDIS_ENABLED" "$TARGET_REDIS_ENABLED"
+  set_or_add_env_value "$TARGET_ENV_FILE" "DRUPAL_VARNISH_ENABLED" "$TARGET_VARNISH_ENABLED"
+  set_or_add_env_value "$TARGET_ENV_FILE" "DRUPAL_REVERSE_PROXY_ENABLED" "$TARGET_REVERSE_PROXY_ENABLED"
+  set_or_add_env_value "$TARGET_ENV_FILE" "DRUPAL_REVERSE_PROXY_ADDRESSES" "127.0.0.1"
+  if [ -n "$TARGET_ENV_SERVICES_FILE" ]; then
+    set_or_add_env_value "$TARGET_ENV_FILE" "DRUPAL_ENV_SERVICES_FILE" "$TARGET_ENV_SERVICES_FILE"
+  fi
+fi
+
 if profiles_include "$TARGET_COMPOSE_PROFILES" "reverse-proxy"; then
   TARGET_UPSTREAM_HOST="$(resolve_upstream_host_from_profiles "$TARGET_COMPOSE_PROFILES")"
   if [ "$DRY_RUN" -eq 1 ]; then
