@@ -282,21 +282,22 @@ services:
     cpus: ${VARNISH_CPUS:-0.40}
 
   phpmyadmin:
-    image: phpmyadmin:5-apache
+    image: nginx:1.27-alpine
     container_name: ${CONTAINER_PREFIX:-infrasight}_phpmyadmin
     hostname: ${PHPMYADMIN_HOSTNAME:-phpmyadmin}
     restart: unless-stopped
     profiles: ["phpmyadmin"]
-    environment:
-      PMA_HOST: ${PMA_HOST:-db-mysql}
-      PMA_PORT: ${PMA_PORT:-3306}
-      PMA_USER: ${PMA_USER:-root}
-      PMA_PASSWORD: ${PMA_PASSWORD:-root}
-      UPLOAD_LIMIT: ${PMA_UPLOAD_LIMIT:-256M}
+    depends_on:
+      - phpmyadmin-fpm
+    volumes:
+      - phpmyadmin_html:/var/www/html:ro
+      - ./config/nginx/phpmyadmin-nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - app_net
       - edge_net
       - proxy
+    expose:
+      - "8080"
     labels:
       - "traefik.enable=${TRAEFIK_ENABLE:-true}"
       - "traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-proxy}"
@@ -310,9 +311,31 @@ services:
       - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.tls=true"
       - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le-dns}"
       - "traefik.http.routers.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin-https.middlewares=${TRAEFIK_UI_SECURITY_MIDDLEWARES:-${TRAEFIK_SECURITY_MIDDLEWARES:-dev-vpn-only@file}}"
-      - "traefik.http.services.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin.loadbalancer.server.port=80"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-infrasight}-phpmyadmin.loadbalancer.server.port=8080"
     mem_limit: ${PHPMYADMIN_MEM_LIMIT:-256m}
     cpus: ${PHPMYADMIN_CPUS:-0.30}
+
+  phpmyadmin-fpm:
+    image: phpmyadmin:5.2.3-fpm-alpine
+    container_name: ${CONTAINER_PREFIX:-infrasight}_phpmyadmin_fpm
+    hostname: ${PHPMYADMIN_FPM_HOSTNAME:-phpmyadmin-fpm}
+    restart: unless-stopped
+    profiles: ["phpmyadmin"]
+    environment:
+      PMA_HOST: ${PMA_HOST:-db-mysql}
+      PMA_PORT: ${PMA_PORT:-3306}
+      PMA_USER: ${PMA_USER:-root}
+      PMA_PASSWORD: ${PMA_PASSWORD:-root}
+      UPLOAD_LIMIT: ${PMA_UPLOAD_LIMIT:-256M}
+      PMA_ABSOLUTE_URI: https://${PHPMYADMIN_DOMAIN}/
+    volumes:
+      - phpmyadmin_html:/var/www/html
+    networks:
+      - app_net
+    expose:
+      - "9000"
+    mem_limit: ${PHPMYADMIN_FPM_MEM_LIMIT:-192m}
+    cpus: ${PHPMYADMIN_FPM_CPUS:-0.20}
 
   mailpit:
     image: axllent/mailpit:latest
@@ -433,4 +456,5 @@ volumes:
   drupal_public_files:
   drupal_private_files:
   drupal_tmp:
+  phpmyadmin_html:
 
