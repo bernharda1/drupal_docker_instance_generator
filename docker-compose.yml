@@ -13,15 +13,18 @@ services:
     working_dir: /var/www/html
     environment:
       TZ: ${TZ:-Europe/Vienna}
+      STACK_ENV: ${STACK_ENV:-dev}
       UPDATE_POLICY: ${FPM_UPDATE_POLICY:-check}
       UPDATE_TARGET: ${FPM_UPDATE_TARGET:-system}
       DRUPAL_TRUSTED_HOST_PATTERNS: ${DRUPAL_TRUSTED_HOST_PATTERNS:-^localhost$,^127\\.0\\.0\\.1$,^${PUBLIC_DOMAIN}$}
-      DRUPAL_DB_DRIVER: ${DRUPAL_DB_DRIVER:-mysql}
-      DRUPAL_DB_HOST: ${DRUPAL_DB_HOST:-db-mysql}
-      DRUPAL_DB_PORT: ${DRUPAL_DB_PORT:-3306}
-      DRUPAL_DB_NAME: ${DRUPAL_DB_NAME:-drupal}
-      DRUPAL_DB_USER: ${DRUPAL_DB_USER:-drupal}
-      DRUPAL_DB_PASSWORD: ${DRUPAL_DB_PASSWORD:-drupal}
+      DB_DRIVER: ${DB_DRIVER:-mysql}
+      DB_HOST: ${DB_HOST:-db-mysql}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-drupal}
+      DB_USER: ${DB_USER:-drupal}
+      DB_PASS: ${DB_PASS:-drupal}
+      CONFIG_SYNC_DIRECTORY: ${CONFIG_SYNC_DIRECTORY:-sites/default/files/config_sync/sync}
+      DRUPAL_HASH_SALT: ${DRUPAL_HASH_SALT:-local-change-me}
       DRUPAL_REDIS_HOST: ${DRUPAL_REDIS_HOST:-redis}
       DRUPAL_MAIL_HOST: ${DRUPAL_MAIL_HOST:-mailpit}
       DRUPAL_MAIL_PORT: ${DRUPAL_MAIL_PORT:-1025}
@@ -191,6 +194,7 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --transaction-isolation=READ-COMMITTED
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-drupal}
@@ -212,6 +216,7 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --transaction-isolation=READ-COMMITTED
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root}
       MARIADB_DATABASE: ${MARIADB_DATABASE:-drupal}
@@ -411,6 +416,16 @@ services:
     environment:
       UPDATE_POLICY: ${DRUSH_UPDATE_POLICY:-off}
       UPDATE_TARGET: ${DRUSH_UPDATE_TARGET:-system}
+      STACK_ENV: ${STACK_ENV:-dev}
+      DRUPAL_TRUSTED_HOST_PATTERNS: ${DRUPAL_TRUSTED_HOST_PATTERNS:-^localhost$,^127\\.0\\.0\\.1$,^${PUBLIC_DOMAIN}$}
+      DB_DRIVER: ${DB_DRIVER:-mysql}
+      DB_HOST: ${DB_HOST:-db-mysql}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-drupal}
+      DB_USER: ${DB_USER:-drupal}
+      DB_PASS: ${DB_PASS:-drupal}
+      CONFIG_SYNC_DIRECTORY: ${CONFIG_SYNC_DIRECTORY:-sites/default/files/config_sync/sync}
+      DRUPAL_HASH_SALT: ${DRUPAL_HASH_SALT:-local-change-me}
     volumes:
       - ./drupal:/var/www/html
       - ./config/php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
