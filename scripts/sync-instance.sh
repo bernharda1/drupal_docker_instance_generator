@@ -85,9 +85,27 @@ get_env_val() {
   awk -F= -v key="$2" '$1==key{print substr($0,index($0,$2))}' "$1" | sed 's/^"\?//;s/"\?$//'
 }
 
+get_env_val_first() {
+  # $1: envfile, $2..$n: keys (first non-empty wins)
+  local env_file="$1"
+  shift
+  local key
+  local value
+
+  for key in "$@"; do
+    value="$(get_env_val "$env_file" "$key" || true)"
+    if [ -n "$value" ]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 echo "Bringing up minimal services in source and target..."
 # Determine DB driver from source env
-DRIVER=$(awk -F= '/^DRUPAL_DB_DRIVER/{print $2}' .env.$SRC | tr -d '"' || true)
+DRIVER=$(awk -F= '/^DB_DRIVER/{print $2}' .env.$SRC | tr -d '"' || true)
 DRIVER=${DRIVER:-mysql}
 
 # Determine compose project names (fall back to proj_<env>)
@@ -157,7 +175,7 @@ case "$DRIVER" in
     TGT_DB_KEY=POSTGRES_DB
     ;;
   *)
-    echo "Unsupported DRUPAL_DB_DRIVER: $DRIVER" >&2; exit 4;;
+    echo "Unsupported DB_DRIVER: $DRIVER" >&2; exit 4;;
 esac
 
 echo "Waiting for DB containers to be running..."
@@ -165,11 +183,14 @@ wait_container "$SRC_DB_CONTAINER" || true
 wait_container "$TGT_DB_CONTAINER" || true
 wait_container infrasight_drupal_fpm || true
 
+SRC_FPM=infrasight_drupal_fpm
+TGT_FPM=infrasight_drupal_fpm
+
 echo "Dumping database from source ($SRC -> container $SRC_DB_CONTAINER)..."
 case "$DRIVER" in
   mysql|mariadb)
     SRC_USER=$(get_env_val .env.$SRC "$SRC_USER_KEY")
-    SRC_PASS=$(get_env_val .env.$SRC "$SRC_PASS_KEY")
+    SRC_PASS="$(get_env_val_first .env.$SRC "$SRC_PASS_KEY" DB_PASS DB_PASSWORD || true)"
     SRC_DB=$(get_env_val .env.$SRC "$SRC_DB_KEY")
     # use MYSQL_PWD to avoid exposing password in process list and avoid tablespaces
     if [ "$DRY_RUN" = true ]; then
@@ -180,7 +201,7 @@ case "$DRIVER" in
     ;;
   postgres)
     SRC_USER=$(get_env_val .env.$SRC "$SRC_USER_KEY")
-    SRC_PASS=$(get_env_val .env.$SRC "$SRC_PASS_KEY")
+    SRC_PASS="$(get_env_val_first .env.$SRC "$SRC_PASS_KEY" DB_PASS DB_PASSWORD || true)"
     SRC_DB=$(get_env_val .env.$SRC "$SRC_DB_KEY")
     if [ "$DRY_RUN" = true ]; then
       echo "[DRY-RUN] Would pg_dump DB from $SRC_DB_CONTAINER (user=$SRC_USER) to $TMPDIR/db.sql"
@@ -198,7 +219,7 @@ echo "Creating target backups in $BACKUP_DIR"
 case "$DRIVER" in
   mysql|mariadb)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
-    TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
+    TGT_PASS="$(get_env_val_first .env.$TGT "$TGT_PASS_KEY" DB_PASS DB_PASSWORD || true)"
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
     echo "Backing up target database to $BACKUP_DIR/target-db.sql.gz"
     # use MYSQL_PWD to avoid password leakage
@@ -210,7 +231,7 @@ case "$DRIVER" in
     ;;
   postgres)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
-    TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
+    TGT_PASS="$(get_env_val_first .env.$TGT "$TGT_PASS_KEY" DB_PASS DB_PASSWORD || true)"
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
     echo "Backing up target database to $BACKUP_DIR/target-db.sql.gz"
     docker exec -i "$TGT_DB_CONTAINER" sh -c "PGPASSWORD=\"$TGT_PASS\" pg_dump -U \"$TGT_USER\" -d \"$TGT_DB\"" | gzip > "$BACKUP_DIR/target-db.sql.gz"
@@ -246,12 +267,16 @@ fi
 
 # Put target into maintenance mode if possible
 echo "Enabling maintenance mode on target (if drush available)"
-docker exec "$TGT_FPM" sh -c 'if [ -x vendor/bin/drush ]; then vendor/bin/drush sset system.maintenance_mode 1 && vendor/bin/drush cr; fi' || true
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would enable maintenance mode on target via drush"
+else
+  docker exec "$TGT_FPM" sh -c 'if [ -x vendor/bin/drush ]; then vendor/bin/drush sset system.maintenance_mode 1 && vendor/bin/drush cr; fi' || true
+fi
 
 case "$DRIVER" in
   mysql|mariadb)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
-    TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
+    TGT_PASS="$(get_env_val_first .env.$TGT "$TGT_PASS_KEY" DB_PASS DB_PASSWORD || true)"
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
     # import using env var for password
     if [ "$DRY_RUN" = true ]; then
@@ -262,7 +287,7 @@ case "$DRIVER" in
     ;;
   postgres)
     TGT_USER=$(get_env_val .env.$TGT "$TGT_USER_KEY")
-    TGT_PASS=$(get_env_val .env.$TGT "$TGT_PASS_KEY")
+    TGT_PASS="$(get_env_val_first .env.$TGT "$TGT_PASS_KEY" DB_PASS DB_PASSWORD || true)"
     TGT_DB=$(get_env_val .env.$TGT "$TGT_DB_KEY")
     if [ "$DRY_RUN" = true ]; then
       echo "[DRY-RUN] Would import SQL into target Postgres DB $TGT_DB from $TMPDIR/db.sql"
@@ -273,9 +298,6 @@ case "$DRIVER" in
 esac
 
 echo "Syncing files directory from source drupal-fpm -> target drupal-fpm"
-SRC_FPM=infrasight_drupal_fpm
-TGT_FPM=infrasight_drupal_fpm
-
 echo "Streaming files from source container to target container (no host temp)..."
 # prepare target (backup existing files)
 if [ "$DRY_RUN" = true ]; then
