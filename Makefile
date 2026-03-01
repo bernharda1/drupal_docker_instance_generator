@@ -8,7 +8,7 @@ ensure-composer-cache:
 	@mkdir -p $(COMPOSER_CACHE_DIR)
 	@chown -R $$(id -u):$$(id -g) $(COMPOSER_CACHE_DIR) || true
 
-.PHONY: help ensure-composer-cache ensure-node-modules composer-install composer-update composer-require validate-env validate-env-dev validate-env-stag validate-env-prod drush-status drush-cr drush-site-install node-ci node-build perms
+.PHONY: help ensure-composer-cache ensure-node-modules composer-install composer-update composer-require validate-env validate-env-dev validate-env-stag validate-env-prod drush-status drush-cr drush-site-install drupal-wait drupal-media-healthcheck node-ci node-build perms
 
 help:
 	@echo "Usage: make <target> [ENV_FILE=.env.dev|.env.stag|.env.prod]"
@@ -24,6 +24,8 @@ help:
 	@echo "  drush-status        Show Drupal status"
 	@echo "  drush-cr            Run drush cache rebuild"
 	@echo "  drush-site-install  Run drush site:install"
+	@echo "  drupal-wait         Wait until Drupal is ready"
+	@echo "  drupal-media-healthcheck Check media write + image derivative generation"
 	@echo "  node-ci             Run npm ci"
 	@echo "  node-build          Run npm run build"
 	@echo "  perms               Reset host file permissions"
@@ -65,6 +67,12 @@ drush-cr:
 drush-site-install:
 	@read -p "DB URL (mysql://user:pass@host/db): " dburl; \
 	$(COMPOSE) run --rm drush vendor/bin/drush site:install standard --db-url=$$dburl --site-name="Site" -y
+
+drupal-wait:
+	./scripts/wait-for-drupal.sh dev
+
+drupal-media-healthcheck:
+	./scripts/healthcheck-media.sh dev
 
 node-ci:
 	@$(MAKE) ensure-node-modules

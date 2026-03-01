@@ -1,3 +1,5 @@
 
 # Ignore local settings and secrets
-drupal/web/sites/default/settings.php
+drupal/web/*
+drupal/recipes/*
+drupal/vendor

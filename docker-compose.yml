@@ -32,11 +32,11 @@ services:
       WRITABLE_GID: ${DRUPAL_WRITABLE_GID:-33}
       WRITABLE_DIR_MODE: ${DRUPAL_WRITABLE_DIR_MODE:-2775}
       WRITABLE_FILE_MODE: ${DRUPAL_WRITABLE_FILE_MODE:-0664}
+      SITES_RECURSIVE_CHOWN: ${DRUPAL_SITES_RECURSIVE_CHOWN:-1}
     volumes:
       - ./drupal:/var/www/html
-      - drupal_public_files:/var/www/html/web/sites/default/files
-      - drupal_private_files:/var/www/html/web/sites/default/private
-      - drupal_tmp:/tmp/drupal
+      - ./drupal/web/sites:/var/www/html/web/sites
+      - ./drupal/tmp:/tmp/drupal
       - ./config/php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
     networks:
       - app_net
@@ -57,7 +57,6 @@ services:
       - drupal-fpm
     volumes:
       - ./drupal:/var/www/html:ro
-      - drupal_public_files:/var/www/html/web/sites/default/files:ro
       - ./config/nginx/web-nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       app_net: {}
@@ -93,7 +92,6 @@ services:
       - drupal-fpm
     volumes:
       - ./drupal:/var/www/html:ro
-      - drupal_public_files:/var/www/html/web/sites/default/files:ro
       - ./config/apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
     networks:
       app_net: {}
@@ -131,7 +129,6 @@ services:
       TZ: ${TZ:-Europe/Vienna}
     volumes:
       - ./drupal:/var/www/html:ro
-      - drupal_public_files:/var/www/html/web/sites/default/files:ro
       - ./config/openlitespeed/httpd_config.conf:/usr/local/lsws/conf/httpd_config.conf
       - ./config/openlitespeed/vhconf.conf:/usr/local/lsws/conf/vhosts/Example/vhconf.conf
     networks:
@@ -428,9 +425,8 @@ services:
       DRUPAL_HASH_SALT: ${DRUPAL_HASH_SALT:-local-change-me}
     volumes:
       - ./drupal:/var/www/html
-      - drupal_public_files:/var/www/html/web/sites/default/files
-      - drupal_private_files:/var/www/html/web/sites/default/private
-      - drupal_tmp:/tmp/drupal
+      - ./drupal/web/sites:/var/www/html/web/sites
+      - ./drupal/tmp:/tmp/drupal
       - ./config/php/php.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
     networks:
       - app_net
@@ -471,8 +467,5 @@ volumes:
   mariadb_data:
   postgres_data:
   redis_data:
-  drupal_public_files:
-  drupal_private_files:
-  drupal_tmp:
   phpmyadmin_html:
 
